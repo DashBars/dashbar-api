@@ -1,0 +1,268 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  manager
+  cashier
+  admin
+}
+
+enum BarType {
+  VIP
+  general
+  backstage
+  lounge
+}
+
+enum BarStatus {
+  open
+  closed
+  lowStock
+}
+
+enum PaymentMethod {
+  credit
+  debit
+  cash
+  bankTransfer
+  wallet
+}
+
+enum DrinkType {
+  alcoholic
+  non_alcoholic
+}
+
+enum ProviderType {
+  in_
+  out
+}
+
+enum PosnetStatus {
+  active
+  inactive
+}
+
+enum AlarmMetric {
+  trafic
+  lowstock
+  closedPostnet
+  closedBar
+}
+
+model User {
+  id       Int      @id @default(autoincrement())
+  email    String   @unique
+  password String
+  role     UserRole
+
+  eventsOwned Event[] @relation("EventOwner")
+}
+
+model Venue {
+  id          Int     @id @default(autoincrement())
+  name        String
+  description String?
+  address     String
+  city        String
+  country     String
+  capacity    Int
+
+  events Event[]
+}
+
+model Event {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  startedAt   DateTime  @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+
+  ownerId Int
+  owner   User  @relation("EventOwner", fields: [ownerId], references: [id])
+
+  venueId Int
+  venue   Venue @relation(fields: [venueId], references: [id])
+
+  bars         Bar[]
+  eventRecipes EventRecipe[]
+  eventPrices  EventPrice[]
+
+  @@map("Event")
+}
+
+// Recipes per bar type within an event
+// All bars of the same type share the same recipes
+model EventRecipe {
+  id                 Int     @id @default(autoincrement())
+  eventId            Int     @map("event_id")
+  barType            BarType @map("bar_type")
+  cocktailId         Int     @map("cocktail_id")
+  drinkId            Int     @map("drink_id")
+  cocktailPercentage Int     @map("cocktail_percentage") // %
+
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  cocktail Cocktail @relation(fields: [cocktailId], references: [id])
+  drink    Drink    @relation(fields: [drinkId], references: [id])
+
+  @@unique([eventId, barType, cocktailId, drinkId])
+  @@map("event_recipe")
+}
+
+// Prices shared across the entire event (no bar or bar-type differentiation)
+model EventPrice {
+  id         Int @id @default(autoincrement())
+  eventId    Int @map("event_id")
+  cocktailId Int @map("cocktail_id")
+  price      Int // in cents
+
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  cocktail Cocktail @relation(fields: [cocktailId], references: [id])
+
+  @@unique([eventId, cocktailId])
+  @@map("event_price")
+}
+
+model Bar {
+  id      Int       @id @default(autoincrement())
+  name    String
+  type    BarType
+  status  BarStatus
+
+  eventId Int
+  event   Event     @relation(fields: [eventId], references: [id])
+
+  stocks  Stock[]
+  posnets Posnet[]
+}
+
+model Stock {
+  barId   Int @map("bar_id")
+  drinkId Int @map("drink_id")
+  amount  Int
+
+  bar   Bar   @relation(fields: [barId], references: [id])
+  drink Drink @relation(fields: [drinkId], references: [id])
+
+  @@id([barId, drinkId])
+}
+
+model Posnet {
+  id      Int         @id @default(autoincrement())
+  status  PosnetStatus
+  traffic Int // %
+
+  barId Int
+  bar   Bar @relation(fields: [barId], references: [id])
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            Int           @id @default(autoincrement())
+  amount        Int
+  paymentMethod PaymentMethod
+  timestamp     DateTime      @default(now())
+
+  posnetId Int
+  posnet   Posnet @relation(fields: [posnetId], references: [id])
+
+  orderId Int?  @unique
+  order   Order? @relation(fields: [orderId], references: [id])
+}
+
+model Order {
+  id Int @id @default(autoincrement())
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  transaction Transaction?
+}
+
+model Product {
+  id     Int  @id @default(autoincrement())
+  amount Int
+  combo  Boolean @default(false)
+
+  cocktailId Int?
+  cocktail   Cocktail? @relation(fields: [cocktailId], references: [id])
+
+  orders Order[]
+}
+
+model Cocktail {
+  id     Int    @id @default(autoincrement())
+  name   String
+  price  Int    // base price (can be overridden by EventPrice)
+  volume Int    // ml
+
+  products     Product[]
+  recipeItems  Recipe[]
+  eventRecipes EventRecipe[]
+  eventPrices  EventPrice[]
+}
+
+model Drink {
+  id           Int          @id @default(autoincrement())
+  name         String
+  brand        String
+  drinkType    DrinkType
+  providerType ProviderType
+  volume       Int // ml
+  value        Int // cost in cents
+
+  stocks       Stock[]
+  providers    DrinkProvider[]
+  recipeItems  Recipe[]
+  eventRecipes EventRecipe[]
+}
+
+model Provider {
+  id          Int    @id @default(autoincrement())
+  name        String
+  description String?
+  email       String?
+  phone       String?
+
+  drinks DrinkProvider[]
+}
+
+model DrinkProvider {
+  providerId Int @map("provider_id")
+  drinkId    Int @map("drink_id")
+  stock      Int
+  value      Int
+
+  provider Provider @relation(fields: [providerId], references: [id])
+  drink    Drink    @relation(fields: [drinkId], references: [id])
+
+  @@id([providerId, drinkId])
+}
+
+model Recipe {
+  drinkId            Int @map("drink_id")
+  cocktailId         Int @map("cocktail_id")
+  cocktailPercentage Int // %
+
+  drink    Drink    @relation(fields: [drinkId], references: [id])
+  cocktail Cocktail @relation(fields: [cocktailId], references: [id])
+
+  @@id([drinkId, cocktailId])
+  @@map("recipe")
+}
+
+model AlarmConfig {
+  id          Int        @id @default(autoincrement())
+  name        String
+  description String?
+  value       Int
+  metric      AlarmMetric
+}
