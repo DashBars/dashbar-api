@@ -6,10 +6,11 @@ import {
   Body,
   Param,
   ParseIntPipe,
-  Headers,
 } from '@nestjs/common';
 import { StockService } from './stock.service';
 import { UpsertStockDto, BulkUpsertStockDto } from './dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '@prisma/client';
 
 @Controller('events/:eventId/bars/:barId/stock')
 export class StockController {
@@ -27,20 +28,20 @@ export class StockController {
   upsert(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: UpsertStockDto,
   ) {
-    return this.stockService.upsert(eventId, barId, parseInt(userId, 10), dto);
+    return this.stockService.upsert(eventId, barId, user.id, dto);
   }
 
   @Post('bulk')
   bulkUpsert(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: BulkUpsertStockDto,
   ) {
-    return this.stockService.bulkUpsert(eventId, barId, parseInt(userId, 10), dto);
+    return this.stockService.bulkUpsert(eventId, barId, user.id, dto);
   }
 
   @Delete(':drinkId')
@@ -48,8 +49,8 @@ export class StockController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
     @Param('drinkId', ParseIntPipe) drinkId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.delete(eventId, barId, drinkId, parseInt(userId, 10));
+    return this.stockService.delete(eventId, barId, drinkId, user.id);
   }
 }

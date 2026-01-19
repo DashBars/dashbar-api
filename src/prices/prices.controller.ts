@@ -7,10 +7,11 @@ import {
   Body,
   Param,
   ParseIntPipe,
-  Headers,
 } from '@nestjs/common';
 import { PricesService } from './prices.service';
 import { CreatePriceDto, UpdatePriceDto } from './dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '@prisma/client';
 
 @Controller('events/:eventId/prices')
 export class PricesController {
@@ -19,19 +20,19 @@ export class PricesController {
   @Post()
   upsert(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: CreatePriceDto,
   ) {
-    return this.pricesService.upsert(eventId, parseInt(userId, 10), dto);
+    return this.pricesService.upsert(eventId, user.id, dto);
   }
 
   @Post('bulk')
   bulkUpsert(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() prices: CreatePriceDto[],
   ) {
-    return this.pricesService.bulkUpsert(eventId, parseInt(userId, 10), prices);
+    return this.pricesService.bulkUpsert(eventId, user.id, prices);
   }
 
   @Get()
@@ -59,18 +60,18 @@ export class PricesController {
   update(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('priceId', ParseIntPipe) priceId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: UpdatePriceDto,
   ) {
-    return this.pricesService.update(eventId, priceId, parseInt(userId, 10), dto);
+    return this.pricesService.update(eventId, priceId, user.id, dto);
   }
 
   @Delete(':priceId')
   delete(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('priceId', ParseIntPipe) priceId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.pricesService.delete(eventId, priceId, parseInt(userId, 10));
+    return this.pricesService.delete(eventId, priceId, user.id);
   }
 }

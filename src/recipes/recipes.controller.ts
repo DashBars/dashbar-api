@@ -8,11 +8,11 @@ import {
   Param,
   Query,
   ParseIntPipe,
-  Headers,
 } from '@nestjs/common';
 import { RecipesService } from './recipes.service';
 import { CreateRecipeDto, UpdateRecipeDto } from './dto';
-import { BarType } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User, BarType } from '@prisma/client';
 
 @Controller('events/:eventId/recipes')
 export class RecipesController {
@@ -21,10 +21,10 @@ export class RecipesController {
   @Post()
   create(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: CreateRecipeDto,
   ) {
-    return this.recipesService.create(eventId, parseInt(userId, 10), dto);
+    return this.recipesService.create(eventId, user.id, dto);
   }
 
   @Get()
@@ -59,33 +59,28 @@ export class RecipesController {
   update(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('recipeId', ParseIntPipe) recipeId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: UpdateRecipeDto,
   ) {
-    return this.recipesService.update(eventId, recipeId, parseInt(userId, 10), dto);
+    return this.recipesService.update(eventId, recipeId, user.id, dto);
   }
 
   @Delete(':recipeId')
   delete(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('recipeId', ParseIntPipe) recipeId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.recipesService.delete(eventId, recipeId, parseInt(userId, 10));
+    return this.recipesService.delete(eventId, recipeId, user.id);
   }
 
   @Post('copy')
   copyRecipes(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Query('from') fromBarType: BarType,
     @Query('to') toBarType: BarType,
   ) {
-    return this.recipesService.copyRecipes(
-      eventId,
-      parseInt(userId, 10),
-      fromBarType,
-      toBarType,
-    );
+    return this.recipesService.copyRecipes(eventId, user.id, fromBarType, toBarType);
   }
 }

@@ -7,10 +7,11 @@ import {
   Body,
   Param,
   ParseIntPipe,
-  Headers,
 } from '@nestjs/common';
 import { BarsService } from './bars.service';
 import { CreateBarDto, UpdateBarDto } from './dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '@prisma/client';
 
 @Controller('events/:eventId/bars')
 export class BarsController {
@@ -19,10 +20,10 @@ export class BarsController {
   @Post()
   create(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: CreateBarDto,
   ) {
-    return this.barsService.create(eventId, parseInt(userId, 10), dto);
+    return this.barsService.create(eventId, user.id, dto);
   }
 
   @Get()
@@ -42,18 +43,18 @@ export class BarsController {
   update(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
     @Body() dto: UpdateBarDto,
   ) {
-    return this.barsService.update(eventId, barId, parseInt(userId, 10), dto);
+    return this.barsService.update(eventId, barId, user.id, dto);
   }
 
   @Delete(':barId')
   delete(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
-    @Headers('x-user-id') userId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.barsService.delete(eventId, barId, parseInt(userId, 10));
+    return this.barsService.delete(eventId, barId, user.id);
   }
 }
