@@ -1,10 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { StockRepository } from './stock.repository';
 import { BarsService } from '../bars/bars.service';
 import { EventsService } from '../events/events.service';
-import { UpsertStockDto, BulkUpsertStockDto } from './dto';
+import { SuppliersService } from '../suppliers/suppliers.service';
+import { UpsertStockDto, BulkUpsertStockDto, CreateConsignmentReturnDto } from './dto';
 import { NotOwnerException } from '../common/exceptions';
-import { Stock } from '@prisma/client';
+import { Stock, ConsignmentReturn, OwnershipMode } from '@prisma/client';
 
 @Injectable()
 export class StockService {
@@ -12,18 +18,54 @@ export class StockService {
     private readonly stockRepository: StockRepository,
     private readonly barsService: BarsService,
     private readonly eventsService: EventsService,
+    private readonly suppliersService: SuppliersService,
   ) {}
 
   /**
    * Get all stock for a specific bar
    */
   async findAllByBar(eventId: number, barId: number): Promise<Stock[]> {
-    await this.barsService.findOne(eventId, barId); // Ensure bar exists in event
+    await this.barsService.findOne(eventId, barId);
     return this.stockRepository.findByBarId(barId);
   }
 
   /**
-   * Upsert stock for a specific bar and drink
+   * Get stock summary aggregated by product
+   */
+  async getStockSummary(
+    eventId: number,
+    barId: number,
+  ): Promise<
+    {
+      drinkId: number;
+      drinkName: string;
+      drinkBrand: string;
+      totalQuantity: number;
+      supplierCount: number;
+    }[]
+  > {
+    await this.barsService.findOne(eventId, barId);
+    return this.stockRepository.getStockSummaryByBar(barId);
+  }
+
+  /**
+   * Get stock breakdown by supplier
+   */
+  async getStockBySupplier(eventId: number, barId: number): Promise<Stock[]> {
+    await this.barsService.findOne(eventId, barId);
+    return this.stockRepository.getStockBySupplier(barId);
+  }
+
+  /**
+   * Get consignment stock available for return
+   */
+  async getConsignmentStock(eventId: number, barId: number): Promise<Stock[]> {
+    await this.barsService.findOne(eventId, barId);
+    return this.stockRepository.getConsignmentStock(barId);
+  }
+
+  /**
+   * Upsert stock for a specific bar, drink, and supplier
    */
   async upsert(
     eventId: number,
@@ -32,12 +74,12 @@ export class StockService {
     dto: UpsertStockDto,
   ): Promise<Stock> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-    
+
     if (!this.eventsService.isOwner(event, userId)) {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId); // Ensure bar exists in event
+    await this.barsService.findOne(eventId, barId);
 
     // Verify drink exists
     const drink = await this.stockRepository.findDrinkById(dto.drinkId);
@@ -45,7 +87,20 @@ export class StockService {
       throw new NotFoundException(`Drink with ID ${dto.drinkId} not found`);
     }
 
-    return this.stockRepository.upsert(barId, dto.drinkId, dto.amount);
+    // Verify supplier belongs to this user (tenant isolation)
+    await this.suppliersService.validateOwnership(dto.supplierId, userId);
+
+    // Validate quantity
+    if (dto.quantity <= 0) {
+      throw new BadRequestException('Quantity must be greater than 0');
+    }
+
+    return this.stockRepository.upsert(barId, dto.drinkId, dto.supplierId, {
+      quantity: dto.quantity,
+      unitCost: dto.unitCost,
+      currency: dto.currency || 'ARS',
+      ownershipMode: dto.ownershipMode,
+    });
   }
 
   /**
@@ -58,16 +113,40 @@ export class StockService {
     dto: BulkUpsertStockDto,
   ): Promise<Stock[]> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-    
+
     if (!this.eventsService.isOwner(event, userId)) {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId); // Ensure bar exists in event
+    await this.barsService.findOne(eventId, barId);
 
     const results: Stock[] = [];
     for (const item of dto.items) {
-      const stock = await this.stockRepository.upsert(barId, item.drinkId, item.amount);
+      // Verify drink exists
+      const drink = await this.stockRepository.findDrinkById(item.drinkId);
+      if (!drink) {
+        throw new NotFoundException(`Drink with ID ${item.drinkId} not found`);
+      }
+
+      // Verify supplier belongs to this user
+      await this.suppliersService.validateOwnership(item.supplierId, userId);
+
+      // Validate quantity
+      if (item.quantity <= 0) {
+        throw new BadRequestException('Quantity must be greater than 0');
+      }
+
+      const stock = await this.stockRepository.upsert(
+        barId,
+        item.drinkId,
+        item.supplierId,
+        {
+          quantity: item.quantity,
+          unitCost: item.unitCost,
+          currency: item.currency || 'ARS',
+          ownershipMode: item.ownershipMode,
+        },
+      );
       results.push(stock);
     }
 
@@ -81,16 +160,31 @@ export class StockService {
     eventId: number,
     barId: number,
     drinkId: number,
+    supplierId: number,
     userId: number,
   ): Promise<void> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-    
+
     if (!this.eventsService.isOwner(event, userId)) {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId); // Ensure bar exists in event
-    await this.stockRepository.delete(barId, drinkId);
+    await this.barsService.findOne(eventId, barId);
+
+    // Verify the stock entry exists
+    const stock = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
+      barId,
+      drinkId,
+      supplierId,
+    );
+
+    if (!stock) {
+      throw new NotFoundException(
+        `Stock entry not found for bar ${barId}, drink ${drinkId}, supplier ${supplierId}`,
+      );
+    }
+
+    await this.stockRepository.delete(barId, drinkId, supplierId);
   }
 
   /**
@@ -99,16 +193,98 @@ export class StockService {
   async getStockByDrinkAcrossEvent(
     eventId: number,
     drinkId: number,
-  ): Promise<{ barId: number; barName: string; amount: number }[]> {
+  ): Promise<
+    { barId: number; barName: string; supplierId: number; supplierName: string; quantity: number }[]
+  > {
     const bars = await this.barsService.findAllByEvent(eventId);
     const barIds = bars.map((b) => b.id);
-    
+
     const stocks = await this.stockRepository.findByDrinkIdAndBarIds(drinkId, barIds);
 
     return stocks.map((s: any) => ({
       barId: s.bar.id,
       barName: s.bar.name,
-      amount: s.amount,
+      supplierId: s.supplier.id,
+      supplierName: s.supplier.name,
+      quantity: s.quantity,
     }));
+  }
+
+  /**
+   * Create a consignment return
+   */
+  async createConsignmentReturn(
+    eventId: number,
+    barId: number,
+    userId: number,
+    dto: CreateConsignmentReturnDto,
+  ): Promise<ConsignmentReturn> {
+    const event = await this.eventsService.findByIdWithOwner(eventId);
+
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
+    await this.barsService.findOne(eventId, barId);
+
+    // Verify supplier belongs to this user
+    await this.suppliersService.validateOwnership(dto.supplierId, userId);
+
+    // Get the stock entry
+    const stock = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
+      barId,
+      dto.drinkId,
+      dto.supplierId,
+    );
+
+    if (!stock) {
+      throw new NotFoundException(
+        `Stock entry not found for bar ${barId}, drink ${dto.drinkId}, supplier ${dto.supplierId}`,
+      );
+    }
+
+    // Verify it's consignment stock
+    if (stock.ownershipMode !== OwnershipMode.consignment) {
+      throw new BadRequestException(
+        'Only consignment stock can be returned. This stock is marked as purchased.',
+      );
+    }
+
+    // Verify quantity is valid
+    if (dto.quantityReturned <= 0) {
+      throw new BadRequestException('Quantity to return must be greater than 0');
+    }
+
+    // Verify we're not returning more than available
+    if (dto.quantityReturned > stock.quantity) {
+      throw new BadRequestException(
+        `Cannot return ${dto.quantityReturned} units. Only ${stock.quantity} units available in stock.`,
+      );
+    }
+
+    // Update stock quantity
+    const newQuantity = stock.quantity - dto.quantityReturned;
+    await this.stockRepository.updateQuantity(barId, dto.drinkId, dto.supplierId, newQuantity);
+
+    // Create return record
+    return this.stockRepository.createConsignmentReturn({
+      stockBarId: barId,
+      stockDrinkId: dto.drinkId,
+      stockSupplierId: dto.supplierId,
+      supplierId: dto.supplierId,
+      quantityReturned: dto.quantityReturned,
+      notes: dto.notes,
+    });
+  }
+
+  /**
+   * Get consignment returns for a bar
+   */
+  async getConsignmentReturns(
+    eventId: number,
+    barId: number,
+  ): Promise<ConsignmentReturn[]> {
+    await this.barsService.findOne(eventId, barId);
+    return this.stockRepository.getConsignmentReturnsByBar(barId);
   }
 }
