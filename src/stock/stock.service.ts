@@ -267,12 +267,14 @@ export class StockService {
     await this.stockRepository.updateQuantity(barId, dto.drinkId, dto.supplierId, newQuantity);
 
     // Create return record
+    // @deprecated: This manual return flow should be replaced with ConsignmentService.executeReturn
     return this.stockRepository.createConsignmentReturn({
       stockBarId: barId,
       stockDrinkId: dto.drinkId,
       stockSupplierId: dto.supplierId,
       supplierId: dto.supplierId,
       quantityReturned: dto.quantityReturned,
+      performedById: userId,
       notes: dto.notes,
     });
   }

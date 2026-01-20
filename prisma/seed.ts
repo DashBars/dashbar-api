@@ -179,6 +179,7 @@ async function main() {
     data: {
       name: 'Vodka',
       brand: 'Absolut',
+      sku: 'DRINK-VODKA-001',
       drinkType: DrinkType.alcoholic,
       providerType: ProviderType.in_,
       volume: 750,
@@ -190,6 +191,7 @@ async function main() {
     data: {
       name: 'Ron',
       brand: 'Havana Club',
+      sku: 'DRINK-RON-001',
       drinkType: DrinkType.alcoholic,
       providerType: ProviderType.in_,
       volume: 750,
@@ -201,6 +203,7 @@ async function main() {
     data: {
       name: 'Tequila',
       brand: 'José Cuervo',
+      sku: 'DRINK-TEQUILA-001',
       drinkType: DrinkType.alcoholic,
       providerType: ProviderType.in_,
       volume: 750,
@@ -212,6 +215,7 @@ async function main() {
     data: {
       name: 'Gin',
       brand: 'Beefeater',
+      sku: 'DRINK-GIN-001',
       drinkType: DrinkType.alcoholic,
       providerType: ProviderType.in_,
       volume: 750,
@@ -223,6 +227,7 @@ async function main() {
     data: {
       name: 'Whisky',
       brand: 'Johnnie Walker Black',
+      sku: 'DRINK-WHISKY-001',
       drinkType: DrinkType.alcoholic,
       providerType: ProviderType.in_,
       volume: 750,
@@ -234,6 +239,7 @@ async function main() {
     data: {
       name: 'Jugo de Naranja',
       brand: 'Fresh',
+      sku: 'DRINK-JUGO-NAR-001',
       drinkType: DrinkType.non_alcoholic,
       providerType: ProviderType.in_,
       volume: 1000,
@@ -245,6 +251,7 @@ async function main() {
     data: {
       name: 'Jugo de Limón',
       brand: 'Fresh',
+      sku: 'DRINK-JUGO-LIM-001',
       drinkType: DrinkType.non_alcoholic,
       providerType: ProviderType.in_,
       volume: 500,
@@ -256,6 +263,7 @@ async function main() {
     data: {
       name: 'Agua Tónica',
       brand: 'Schweppes',
+      sku: 'DRINK-TONICA-001',
       drinkType: DrinkType.non_alcoholic,
       providerType: ProviderType.in_,
       volume: 500,
@@ -267,6 +275,7 @@ async function main() {
     data: {
       name: 'Cola',
       brand: 'Coca-Cola',
+      sku: 'DRINK-COLA-001',
       drinkType: DrinkType.non_alcoholic,
       providerType: ProviderType.in_,
       volume: 500,

@@ -195,6 +195,7 @@ export class StockRepository {
 
   /**
    * Create a consignment return record
+   * @deprecated Use ConsignmentService.executeReturn instead for system-controlled returns
    */
   async createConsignmentReturn(data: {
     stockBarId: number;
@@ -202,6 +203,7 @@ export class StockRepository {
     stockSupplierId: number;
     supplierId: number;
     quantityReturned: number;
+    performedById: number;
     notes?: string;
   }): Promise<ConsignmentReturn> {
     return this.prisma.consignmentReturn.create({
@@ -209,6 +211,7 @@ export class StockRepository {
       include: {
         stock: { include: { drink: true } },
         supplier: true,
+        performedBy: { select: { id: true, email: true } },
       },
     });
   }

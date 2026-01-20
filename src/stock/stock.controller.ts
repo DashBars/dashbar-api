@@ -99,6 +99,8 @@ export class StockController {
 
   /**
    * Register a consignment return
+   * @deprecated Use POST /events/:eventId/bars/:barId/consignment/returns/:drinkId/:supplierId/execute instead.
+   * The new endpoint uses system-calculated quantities that cannot be manipulated.
    */
   @Post('consignment-return')
   createConsignmentReturn(

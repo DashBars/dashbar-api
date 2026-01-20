@@ -103,8 +103,9 @@ model User {
   password String
   role     UserRole
 
-  eventsOwned Event[]    @relation("EventOwner")
-  suppliers   Supplier[]
+  eventsOwned        Event[]             @relation("EventOwner")
+  suppliers          Supplier[]
+  consignmentReturns ConsignmentReturn[]
 }
 
 model Venue {
@@ -285,6 +286,7 @@ model Drink {
   id           Int          @id @default(autoincrement())
   name         String
   brand        String
+  sku          String       @unique // Unique code for supplier traceability
   drinkType    DrinkType
   providerType ProviderType
   volume       Int // ml
@@ -371,6 +373,10 @@ model ConsignmentReturn {
   quantityReturned Int      @map("quantity_returned")
   returnedAt       DateTime @default(now()) @map("returned_at")
   notes            String?
+
+  // Audit: who performed the return
+  performedById Int  @map("performed_by_id")
+  performedBy   User @relation(fields: [performedById], references: [id])
 
   stock    Stock    @relation(fields: [stockBarId, stockDrinkId, stockSupplierId], references: [barId, drinkId, supplierId])
   supplier Supplier @relation(fields: [supplierId], references: [id])

@@ -20,6 +20,7 @@ import { AlarmsModule } from './alarms/alarms.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { ReportsModule } from './reports/reports.module';
 import { POSModule } from './pos/pos.module';
+import { ConsignmentModule } from './consignment/consignment.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 
@@ -47,6 +48,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     TransfersModule,
     ReportsModule,
     POSModule,
+    ConsignmentModule,
   ],
   providers: [
     {
