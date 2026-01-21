@@ -23,8 +23,9 @@ export class StockController {
   findAll(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.findAllByBar(eventId, barId);
+    return this.stockService.findAllByBar(eventId, barId, user.id);
   }
 
   /**
@@ -34,8 +35,9 @@ export class StockController {
   getSummary(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.getStockSummary(eventId, barId);
+    return this.stockService.getStockSummary(eventId, barId, user.id);
   }
 
   /**
@@ -45,8 +47,9 @@ export class StockController {
   getBySupplier(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.getStockBySupplier(eventId, barId);
+    return this.stockService.getStockBySupplier(eventId, barId, user.id);
   }
 
   /**
@@ -56,8 +59,9 @@ export class StockController {
   getConsignmentStock(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.getConsignmentStock(eventId, barId);
+    return this.stockService.getConsignmentStock(eventId, barId, user.id);
   }
 
   /**
@@ -67,8 +71,9 @@ export class StockController {
   getConsignmentReturns(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.stockService.getConsignmentReturns(eventId, barId);
+    return this.stockService.getConsignmentReturns(eventId, barId, user.id);
   }
 
   /**

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Bar, BarType, Prisma } from '@prisma/client';
+import { Bar, BarType, BarStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class BarsRepository {
@@ -71,6 +71,16 @@ export class BarsRepository {
   async delete(id: number): Promise<void> {
     await this.prisma.bar.delete({
       where: { id },
+    });
+  }
+
+  /**
+   * Update all bars in an event to a specific status
+   */
+  async updateAllBarsInEvent(eventId: number, status: BarStatus): Promise<{ count: number }> {
+    return this.prisma.bar.updateMany({
+      where: { eventId },
+      data: { status },
     });
   }
 }

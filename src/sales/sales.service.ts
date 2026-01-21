@@ -201,16 +201,16 @@ export class SalesService {
   /**
    * Get all sales for a bar
    */
-  async findAllByBar(eventId: number, barId: number): Promise<Sale[]> {
-    await this.barsService.findOne(eventId, barId);
+  async findAllByBar(eventId: number, barId: number, userId: number): Promise<Sale[]> {
+    await this.barsService.findOne(eventId, barId, userId);
     return this.salesRepository.findByBarId(barId);
   }
 
   /**
    * Get a specific sale
    */
-  async findOne(eventId: number, barId: number, saleId: number): Promise<Sale> {
-    await this.barsService.findOne(eventId, barId);
+  async findOne(eventId: number, barId: number, saleId: number, userId: number): Promise<Sale> {
+    await this.barsService.findOne(eventId, barId, userId);
 
     const sale = await this.salesRepository.findById(saleId);
 
@@ -227,8 +227,9 @@ export class SalesService {
   async getInventoryMovements(
     eventId: number,
     barId: number,
+    userId: number,
   ): Promise<InventoryMovement[]> {
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
     return this.salesRepository.getInventoryMovementsByBar(barId);
   }
 
@@ -239,8 +240,9 @@ export class SalesService {
     eventId: number,
     barId: number,
     saleId: number,
+    userId: number,
   ): Promise<InventoryMovement[]> {
-    await this.findOne(eventId, barId, saleId); // Validates sale exists in bar
+    await this.findOne(eventId, barId, saleId, userId); // Validates sale exists in bar
     return this.salesRepository.getInventoryMovementsBySale(saleId);
   }
 }

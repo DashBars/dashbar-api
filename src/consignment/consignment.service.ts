@@ -38,7 +38,7 @@ export class ConsignmentService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Get consignment stock for the bar
     const consignmentStock = await this.repository.getConsignmentStockForBar(barId);
@@ -157,7 +157,7 @@ export class ConsignmentService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Get the stock entry
     const stock = await this.repository.getStock(barId, drinkId, supplierId);
@@ -220,7 +220,7 @@ export class ConsignmentService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Get all consignment stock for the bar
     const consignmentStock = await this.repository.getConsignmentStockForBar(barId);

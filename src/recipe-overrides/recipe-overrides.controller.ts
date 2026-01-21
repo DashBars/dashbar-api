@@ -31,8 +31,9 @@ export class RecipeOverridesController {
   findAll(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.service.findAllByBar(eventId, barId);
+    return this.service.findAllByBar(eventId, barId, user.id);
   }
 
   @Get('cocktail/:cocktailId')
@@ -40,8 +41,9 @@ export class RecipeOverridesController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
     @Param('cocktailId', ParseIntPipe) cocktailId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.service.findByCocktail(eventId, barId, cocktailId);
+    return this.service.findByCocktail(eventId, barId, cocktailId, user.id);
   }
 
   @Get(':overrideId')
@@ -49,8 +51,9 @@ export class RecipeOverridesController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
     @Param('overrideId', ParseIntPipe) overrideId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.service.findOne(eventId, barId, overrideId);
+    return this.service.findOne(eventId, barId, overrideId, user.id);
   }
 
   @Put(':overrideId')

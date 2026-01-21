@@ -40,11 +40,6 @@ enum DrinkType {
   non_alcoholic
 }
 
-enum ProviderType {
-  in_
-  out
-}
-
 enum PosnetStatus {
   active
   inactive
@@ -63,38 +58,38 @@ enum OwnershipMode {
 }
 
 enum StockDepletionPolicy {
-  cheapest_first   // Deduct cheapest stock first (optimizes costs)
-  fifo             // First in, first out (by receivedAt)
+  cheapest_first // Deduct cheapest stock first (optimizes costs)
+  fifo // First in, first out (by receivedAt)
   consignment_last // Purchased first, consignment last (maximize returns)
 }
 
 enum MovementType {
-  sale         // Deduction from sale
-  adjustment   // Manual adjustment
-  return_      // Return to supplier
-  input        // Stock input
+  sale // Deduction from sale
+  adjustment // Manual adjustment
+  return_ // Return to supplier
+  input // Stock input
   transfer_out // Donor: stock leaving
-  transfer_in  // Receiver: stock arriving
+  transfer_in // Receiver: stock arriving
 }
 
 enum AlertType {
-  low_stock           // Stock below lower threshold
+  low_stock // Stock below lower threshold
   projected_depletion // Projected to deplete within time horizon
 }
 
 enum AlertStatus {
-  active       // Alert is current
+  active // Alert is current
   acknowledged // User saw it but no action yet
-  resolved     // Stock replenished or transferred
-  expired      // Event ended or no longer relevant
+  resolved // Stock replenished or transferred
+  expired // Event ended or no longer relevant
 }
 
 enum TransferStatus {
-  requested  // Receiver requested transfer
-  approved   // Donor approved
-  rejected   // Donor rejected
-  completed  // Stock moved
-  cancelled  // Request cancelled
+  requested // Receiver requested transfer
+  approved // Donor approved
+  rejected // Donor rejected
+  completed // Stock moved
+  cancelled // Request cancelled
 }
 
 model User {
@@ -106,6 +101,8 @@ model User {
   eventsOwned        Event[]             @relation("EventOwner")
   suppliers          Supplier[]
   consignmentReturns ConsignmentReturn[]
+  venues             Venue[]
+  managerInventories ManagerInventory[]
 }
 
 model Venue {
@@ -117,32 +114,38 @@ model Venue {
   country     String
   capacity    Int
 
+  ownerId Int?  @map("owner_id")
+  owner   User? @relation(fields: [ownerId], references: [id])
+
   events Event[]
+
+  @@map("Venue")
 }
 
 model Event {
   id          Int       @id @default(autoincrement())
   name        String
   description String?
-  startedAt   DateTime  @map("started_at")
+  startedAt   DateTime? @map("started_at")
   finishedAt  DateTime? @map("finished_at")
 
   stockDepletionPolicy StockDepletionPolicy @default(cheapest_first) @map("stock_depletion_policy")
 
   ownerId Int
-  owner   User  @relation("EventOwner", fields: [ownerId], references: [id])
+  owner   User @relation("EventOwner", fields: [ownerId], references: [id])
 
   venueId Int
   venue   Venue @relation(fields: [venueId], references: [id])
 
-  bars         Bar[]
-  eventRecipes EventRecipe[]
-  eventPrices  EventPrice[]
-  categories   Category[]
-  thresholds   StockThreshold[]
-  alerts       StockAlert[]
-  transfers    StockTransfer[]
-  report       EventReport?
+  bars                 Bar[]
+  eventRecipes         EventRecipe[]
+  eventPrices          EventPrice[]
+  categories           Category[]
+  thresholds           StockThreshold[]
+  alerts               StockAlert[]
+  transfers            StockTransfer[]
+  report               EventReport?
+  inventoryAllocations ManagerInventoryAllocation[]
 
   @@map("Event")
 }
@@ -180,22 +183,23 @@ model EventPrice {
 }
 
 model Bar {
-  id      Int       @id @default(autoincrement())
-  name    String
-  type    BarType
-  status  BarStatus
+  id     Int       @id @default(autoincrement())
+  name   String
+  type   BarType
+  status BarStatus
 
   eventId Int
   event   Event @relation(fields: [eventId], references: [id])
 
-  stocks             Stock[]
-  posnets            Posnet[]
-  recipeOverrides    BarRecipeOverride[]
-  sales              Sale[]
-  inventoryMovements InventoryMovement[]
-  alerts             StockAlert[]
-  transfersReceived  StockTransfer[] @relation("TransferReceiver")
-  transfersDonated   StockTransfer[] @relation("TransferDonor")
+  stocks               Stock[]
+  posnets              Posnet[]
+  recipeOverrides      BarRecipeOverride[]
+  sales                Sale[]
+  inventoryMovements   InventoryMovement[]
+  alerts               StockAlert[]
+  transfersReceived    StockTransfer[]              @relation("TransferReceiver")
+  transfersDonated     StockTransfer[]              @relation("TransferDonor")
+  inventoryAllocations ManagerInventoryAllocation[]
 }
 
 model Stock {
@@ -219,7 +223,7 @@ model Stock {
 }
 
 model Posnet {
-  id      Int         @id @default(autoincrement())
+  id      Int          @id @default(autoincrement())
   status  PosnetStatus
   traffic Int // %
 
@@ -238,7 +242,7 @@ model Transaction {
   posnetId Int
   posnet   Posnet @relation(fields: [posnetId], references: [id])
 
-  orderId Int?  @unique
+  orderId Int?   @unique
   order   Order? @relation(fields: [orderId], references: [id])
 }
 
@@ -252,7 +256,7 @@ model Order {
 }
 
 model Product {
-  id     Int  @id @default(autoincrement())
+  id     Int     @id @default(autoincrement())
   amount Int
   combo  Boolean @default(false)
 
@@ -263,15 +267,15 @@ model Product {
 }
 
 model Cocktail {
-  id          Int      @id @default(autoincrement())
+  id          Int     @id @default(autoincrement())
   name        String
   description String?
-  imageUrl    String?  @map("image_url")
-  sku         String?  @unique // Unique code for POS
-  price       Int      // base price in cents (can be overridden by EventPrice)
-  volume      Int      // ml
-  isActive    Boolean  @default(true) @map("is_active")
-  isCombo     Boolean  @default(false) @map("is_combo")
+  imageUrl    String? @map("image_url")
+  sku         String? @unique // Unique code for POS
+  price       Int // base price in cents (can be overridden by EventPrice)
+  volume      Int // ml
+  isActive    Boolean @default(true) @map("is_active")
+  isCombo     Boolean @default(false) @map("is_combo")
 
   products        Product[]
   recipeItems     Recipe[]
@@ -283,14 +287,12 @@ model Cocktail {
 }
 
 model Drink {
-  id           Int          @id @default(autoincrement())
-  name         String
-  brand        String
-  sku          String       @unique // Unique code for supplier traceability
-  drinkType    DrinkType
-  providerType ProviderType
-  volume       Int // ml
-  value        Int // cost in cents
+  id        Int       @id @default(autoincrement())
+  name      String
+  brand     String
+  sku       String    @unique // Unique code for supplier traceability
+  drinkType DrinkType
+  volume    Int // ml
 
   stocks             Stock[]
   providers          DrinkProvider[]
@@ -301,10 +303,11 @@ model Drink {
   thresholds         StockThreshold[]
   alerts             StockAlert[]
   transfers          StockTransfer[]
+  managerInventories ManagerInventory[]
 }
 
 model Provider {
-  id          Int    @id @default(autoincrement())
+  id          Int     @id @default(autoincrement())
   name        String
   description String?
   email       String?
@@ -358,6 +361,7 @@ model Supplier {
   stocks             Stock[]
   consignmentReturns ConsignmentReturn[]
   inventoryMovements InventoryMovement[]
+  managerInventories ManagerInventory[]
 
   @@map("supplier")
 }
@@ -406,7 +410,7 @@ model InventoryMovement {
   barId       Int          @map("bar_id")
   drinkId     Int          @map("drink_id")
   supplierId  Int          @map("supplier_id")
-  quantity    Int          // Negative for deductions, positive for additions
+  quantity    Int // Negative for deductions, positive for additions
   type        MovementType
   referenceId Int?         @map("reference_id") // saleId, returnId, etc.
   notes       String?
@@ -424,7 +428,7 @@ model Sale {
   id         Int      @id @default(autoincrement())
   barId      Int      @map("bar_id")
   cocktailId Int      @map("cocktail_id")
-  quantity   Int      // Number of cocktails sold
+  quantity   Int // Number of cocktails sold
   createdAt  DateTime @default(now()) @map("created_at")
 
   bar      Bar      @relation(fields: [barId], references: [id])
@@ -435,12 +439,12 @@ model Sale {
 
 // Category for organizing products in POS menu
 model Category {
-  id          Int      @id @default(autoincrement())
-  eventId     Int      @map("event_id")
+  id          Int     @id @default(autoincrement())
+  eventId     Int     @map("event_id")
   name        String
   description String?
-  sortIndex   Int      @default(0) @map("sort_index")
-  isActive    Boolean  @default(true) @map("is_active")
+  sortIndex   Int     @default(0) @map("sort_index")
+  isActive    Boolean @default(true) @map("is_active")
 
   event     Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
   cocktails CocktailCategory[]
@@ -467,8 +471,8 @@ model StockThreshold {
   id                  Int  @id @default(autoincrement())
   eventId             Int  @map("event_id")
   drinkId             Int  @map("drink_id")
-  lowerThreshold      Int  @map("lower_threshold")      // Critical floor (ml)
-  donationThreshold   Int  @map("donation_threshold")   // Surplus level (ml)
+  lowerThreshold      Int  @map("lower_threshold") // Critical floor (ml)
+  donationThreshold   Int  @map("donation_threshold") // Surplus level (ml)
   depletionHorizonMin Int? @map("depletion_horizon_min") // Optional: minutes for projection
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -487,7 +491,7 @@ model StockAlert {
   type             AlertType
   status           AlertStatus @default(active)
   currentStock     Int         @map("current_stock")
-  threshold        Int         // The threshold that was breached
+  threshold        Int // The threshold that was breached
   suggestedDonors  Json?       @map("suggested_donors") // Array of donor suggestions
   externalNeeded   Boolean     @default(false) @map("external_needed")
   projectedMinutes Int?        @map("projected_minutes") // Time to depletion
@@ -508,7 +512,7 @@ model StockTransfer {
   receiverBarId Int            @map("receiver_bar_id")
   donorBarId    Int            @map("donor_bar_id")
   drinkId       Int            @map("drink_id")
-  quantity      Int            // ml to transfer
+  quantity      Int // ml to transfer
   status        TransferStatus @default(requested)
   alertId       Int?           @map("alert_id") // Optional link to originating alert
   requestedAt   DateTime       @default(now()) @map("requested_at")
@@ -531,17 +535,17 @@ model EventReport {
   generatedAt DateTime @default(now()) @map("generated_at")
 
   // Summary totals
-  totalRevenue    Int @map("total_revenue")     // cents
-  totalCOGS       Int @map("total_cogs")        // cents
-  grossProfit     Int @map("gross_profit")      // cents
+  totalRevenue    Int @map("total_revenue") // cents
+  totalCOGS       Int @map("total_cogs") // cents
+  grossProfit     Int @map("gross_profit") // cents
   totalUnitsSold  Int @map("total_units_sold")
   totalOrderCount Int @map("total_order_count")
 
   // Detailed data (JSON)
-  topProducts        Json @map("top_products")         // Array of top sellers
-  peakHours          Json @map("peak_hours")           // Peak time windows
-  timeSeries         Json @map("time_series")          // Bucketed data for charts
-  remainingStock     Json @map("remaining_stock")      // Stock snapshot with valuation
+  topProducts        Json @map("top_products") // Array of top sellers
+  peakHours          Json @map("peak_hours") // Peak time windows
+  timeSeries         Json @map("time_series") // Bucketed data for charts
+  remainingStock     Json @map("remaining_stock") // Stock snapshot with valuation
   consumptionByDrink Json @map("consumption_by_drink") // COGS breakdown
 
   // Metadata
@@ -550,4 +554,42 @@ model EventReport {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@map("event_report")
+}
+
+model ManagerInventory {
+  id         Int @id @default(autoincrement())
+  ownerId    Int @map("owner_id")
+  drinkId    Int @map("drink_id")
+  supplierId Int @map("supplier_id")
+
+  totalQuantity     Int      @map("total_quantity") // Cantidad total disponible
+  allocatedQuantity Int      @default(0) @map("allocated_quantity") // Cantidad asignada a barras
+  unitCost          Int      @map("unit_cost") // Costo unitario en centavos
+  currency          String   @default("ARS")
+  sku               String? // SKU del proveedor (puede diferir del SKU del Drink)
+  receivedAt        DateTime @default(now()) @map("received_at")
+
+  owner    User     @relation(fields: [ownerId], references: [id])
+  drink    Drink    @relation(fields: [drinkId], references: [id])
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+
+  allocations ManagerInventoryAllocation[]
+
+  @@unique([ownerId, drinkId, supplierId])
+  @@map("manager_inventory")
+}
+
+model ManagerInventoryAllocation {
+  id                 Int      @id @default(autoincrement())
+  managerInventoryId Int      @map("manager_inventory_id")
+  eventId            Int      @map("event_id")
+  barId              Int      @map("bar_id")
+  quantity           Int // Cantidad transferida
+  allocatedAt        DateTime @default(now()) @map("allocated_at")
+
+  managerInventory ManagerInventory @relation(fields: [managerInventoryId], references: [id], onDelete: Cascade)
+  event            Event            @relation(fields: [eventId], references: [id])
+  bar              Bar              @relation(fields: [barId], references: [id])
+
+  @@map("manager_inventory_allocation")
 }

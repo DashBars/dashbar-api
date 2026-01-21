@@ -27,16 +27,20 @@ export class BarsController {
   }
 
   @Get()
-  findAll(@Param('eventId', ParseIntPipe) eventId: number) {
-    return this.barsService.findAllByEvent(eventId);
+  findAll(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
+  ) {
+    return this.barsService.findAllByEvent(eventId, user.id);
   }
 
   @Get(':barId')
   findOne(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.barsService.findOne(eventId, barId);
+    return this.barsService.findOne(eventId, barId, user.id);
   }
 
   @Put(':barId')

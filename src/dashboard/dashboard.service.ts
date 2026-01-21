@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DashboardRepository } from './dashboard.repository';
 import { EventsService } from '../events/events.service';
 import {
@@ -69,6 +69,10 @@ export class DashboardService {
   ): Promise<TimeSeriesResponse> {
     // Validate event and get start time
     const event = await this.eventsService.findById(eventId);
+
+    if (!event.startedAt) {
+      throw new BadRequestException('Event has not started yet');
+    }
 
     // Default time range: event start to now
     const effectiveFrom = from ?? new Date(event.startedAt);

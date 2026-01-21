@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient, BarType, BarStatus, UserRole, DrinkType, ProviderType, OwnershipMode, StockDepletionPolicy, MovementType } from '@prisma/client';
+import { PrismaClient, BarType, BarStatus, UserRole, DrinkType, OwnershipMode, StockDepletionPolicy, MovementType } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcrypt';
@@ -46,6 +46,47 @@ async function main() {
   await prisma.provider.deleteMany();
   await prisma.venue.deleteMany();
   await prisma.user.deleteMany();
+
+  // Reset all sequences to start from 1
+  console.log('🔄 Resetting auto-increment sequences...');
+  const sequences = [
+    'User_id_seq',
+    'Venue_id_seq',
+    'Event_id_seq',
+    'Bar_id_seq',
+    'Drink_id_seq',
+    'Provider_id_seq',
+    'Cocktail_id_seq',
+    'Product_id_seq',
+    'recipe_id_seq', // @@map("recipe")
+    'Posnet_id_seq',
+    'Transaction_id_seq',
+    'Order_id_seq',
+    'supplier_id_seq', // @@map("supplier")
+    'event_price_id_seq', // @@map("event_price")
+    'event_recipe_id_seq', // @@map("event_recipe")
+    'category_id_seq', // @@map("category")
+    'consignment_return_id_seq', // @@map("consignment_return")
+    'bar_recipe_override_id_seq', // @@map("bar_recipe_override")
+    'inventory_movement_id_seq', // @@map("inventory_movement")
+    'sale_id_seq', // @@map("sale")
+    'stock_threshold_id_seq', // @@map("stock_threshold")
+    'stock_alert_id_seq', // @@map("stock_alert")
+    'stock_transfer_id_seq', // @@map("stock_transfer")
+    'event_report_id_seq', // @@map("event_report")
+    'AlarmConfig_id_seq',
+  ];
+
+  for (const sequence of sequences) {
+    try {
+      await pool.query(`ALTER SEQUENCE "${sequence}" RESTART WITH 1`);
+    } catch (error: any) {
+      // Ignore errors for sequences that don't exist (e.g., composite key tables)
+      if (!error.message.includes('does not exist') && !error.message.includes('relation') && !error.message.includes('sequence')) {
+        console.warn(`⚠️  Could not reset sequence ${sequence}: ${error.message}`);
+      }
+    }
+  }
 
   // ============= USERS =============
   console.log('👤 Creating users...');
@@ -181,9 +222,7 @@ async function main() {
       brand: 'Absolut',
       sku: 'DRINK-VODKA-001',
       drinkType: DrinkType.alcoholic,
-      providerType: ProviderType.in_,
       volume: 750,
-      value: 2500,
     },
   });
 
@@ -193,9 +232,7 @@ async function main() {
       brand: 'Havana Club',
       sku: 'DRINK-RON-001',
       drinkType: DrinkType.alcoholic,
-      providerType: ProviderType.in_,
       volume: 750,
-      value: 3000,
     },
   });
 
@@ -205,9 +242,7 @@ async function main() {
       brand: 'José Cuervo',
       sku: 'DRINK-TEQUILA-001',
       drinkType: DrinkType.alcoholic,
-      providerType: ProviderType.in_,
       volume: 750,
-      value: 3500,
     },
   });
 
@@ -217,9 +252,7 @@ async function main() {
       brand: 'Beefeater',
       sku: 'DRINK-GIN-001',
       drinkType: DrinkType.alcoholic,
-      providerType: ProviderType.in_,
       volume: 750,
-      value: 2800,
     },
   });
 
@@ -229,9 +262,7 @@ async function main() {
       brand: 'Johnnie Walker Black',
       sku: 'DRINK-WHISKY-001',
       drinkType: DrinkType.alcoholic,
-      providerType: ProviderType.in_,
       volume: 750,
-      value: 5000,
     },
   });
 
@@ -241,9 +272,7 @@ async function main() {
       brand: 'Fresh',
       sku: 'DRINK-JUGO-NAR-001',
       drinkType: DrinkType.non_alcoholic,
-      providerType: ProviderType.in_,
       volume: 1000,
-      value: 500,
     },
   });
 
@@ -253,9 +282,7 @@ async function main() {
       brand: 'Fresh',
       sku: 'DRINK-JUGO-LIM-001',
       drinkType: DrinkType.non_alcoholic,
-      providerType: ProviderType.in_,
       volume: 500,
-      value: 400,
     },
   });
 
@@ -265,9 +292,7 @@ async function main() {
       brand: 'Schweppes',
       sku: 'DRINK-TONICA-001',
       drinkType: DrinkType.non_alcoholic,
-      providerType: ProviderType.in_,
       volume: 500,
-      value: 300,
     },
   });
 
@@ -277,9 +302,7 @@ async function main() {
       brand: 'Coca-Cola',
       sku: 'DRINK-COLA-001',
       drinkType: DrinkType.non_alcoholic,
-      providerType: ProviderType.in_,
       volume: 500,
-      value: 250,
     },
   });
 

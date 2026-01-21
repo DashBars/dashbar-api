@@ -254,6 +254,9 @@ export class ReportsService {
   ): EventComparisonRow[] {
     return reports.map((report) => {
       const event = report.event;
+      if (!event.startedAt) {
+        throw new Error(`Event ${event.id} has not started yet`);
+      }
       const startedAt = new Date(event.startedAt);
       const finishedAt = event.finishedAt ? new Date(event.finishedAt) : startedAt;
       const durationMs = finishedAt.getTime() - startedAt.getTime();

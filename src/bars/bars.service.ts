@@ -1,9 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { BarsRepository } from './bars.repository';
 import { EventsService } from '../events/events.service';
 import { CreateBarDto, UpdateBarDto } from './dto';
 import { NotOwnerException } from '../common/exceptions';
-import { Bar, BarType } from '@prisma/client';
+import { Bar, BarType, BarStatus } from '@prisma/client';
 
 @Injectable()
 export class BarsService {
@@ -22,6 +22,11 @@ export class BarsService {
       throw new NotOwnerException();
     }
 
+    // Cannot create bars for finished events
+    if (event.finishedAt !== null) {
+      throw new BadRequestException('Cannot create bars for a finished event');
+    }
+
     return this.barsRepository.create({
       name: dto.name,
       type: dto.type,
@@ -31,17 +36,28 @@ export class BarsService {
   }
 
   /**
-   * List all bars for an event
+   * List all bars for an event (only if user owns the event)
    */
-  async findAllByEvent(eventId: number): Promise<Bar[]> {
-    await this.eventsService.findById(eventId); // Ensure event exists
+  async findAllByEvent(eventId: number, userId: number): Promise<Bar[]> {
+    const event = await this.eventsService.findByIdWithOwner(eventId);
+    
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
     return this.barsRepository.findByEventId(eventId);
   }
 
   /**
-   * Find a specific bar by ID within an event
+   * Find a specific bar by ID within an event (only if user owns the event)
    */
-  async findOne(eventId: number, barId: number): Promise<Bar> {
+  async findOne(eventId: number, barId: number, userId: number): Promise<Bar> {
+    const event = await this.eventsService.findByIdWithOwner(eventId);
+    
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
     const bar = await this.barsRepository.findByEventIdAndBarId(eventId, barId);
 
     if (!bar) {
@@ -61,7 +77,7 @@ export class BarsService {
       throw new NotOwnerException();
     }
 
-    await this.findOne(eventId, barId); // Ensure bar exists in event
+    await this.findOne(eventId, barId, userId); // Ensure bar exists in event and user owns it
 
     return this.barsRepository.update(barId, dto);
   }
@@ -76,21 +92,41 @@ export class BarsService {
       throw new NotOwnerException();
     }
 
-    await this.findOne(eventId, barId); // Ensure bar exists in event
+    await this.findOne(eventId, barId, userId); // Ensure bar exists in event and user owns it
     await this.barsRepository.delete(barId);
   }
 
   /**
-   * Get bars by type within an event
+   * Get bars by type within an event (only if user owns the event)
    */
-  async findByType(eventId: number, barType: BarType): Promise<Bar[]> {
+  async findByType(eventId: number, barType: BarType, userId: number): Promise<Bar[]> {
+    const event = await this.eventsService.findByIdWithOwner(eventId);
+    
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
     return this.barsRepository.findByEventIdAndType(eventId, barType);
   }
 
   /**
-   * Get all bar types used in an event
+   * Get all bar types used in an event (only if user owns the event)
    */
-  async getBarTypesInEvent(eventId: number): Promise<BarType[]> {
+  async getBarTypesInEvent(eventId: number, userId: number): Promise<BarType[]> {
+    const event = await this.eventsService.findByIdWithOwner(eventId);
+    
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
     return this.barsRepository.findDistinctTypesByEventId(eventId);
+  }
+
+  /**
+   * Update bar status (used by alarms service)
+   * This method doesn't require ownership validation as it's called internally
+   */
+  async updateBarStatus(barId: number, status: BarStatus): Promise<Bar> {
+    return this.barsRepository.update(barId, { status });
   }
 }

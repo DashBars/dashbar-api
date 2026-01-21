@@ -25,7 +25,7 @@ export class RecipeOverridesService {
     }
 
     // Ensure bar exists in event
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
   }
 
   /**
@@ -57,8 +57,8 @@ export class RecipeOverridesService {
   /**
    * Get all recipe overrides for a bar
    */
-  async findAllByBar(eventId: number, barId: number): Promise<BarRecipeOverride[]> {
-    await this.barsService.findOne(eventId, barId);
+  async findAllByBar(eventId: number, barId: number, userId: number): Promise<BarRecipeOverride[]> {
+    await this.barsService.findOne(eventId, barId, userId);
     return this.repository.findByBarId(barId);
   }
 
@@ -69,16 +69,17 @@ export class RecipeOverridesService {
     eventId: number,
     barId: number,
     cocktailId: number,
+    userId: number,
   ): Promise<BarRecipeOverride[]> {
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
     return this.repository.findByBarIdAndCocktailId(barId, cocktailId);
   }
 
   /**
    * Get a specific override by ID
    */
-  async findOne(eventId: number, barId: number, overrideId: number): Promise<BarRecipeOverride> {
-    await this.barsService.findOne(eventId, barId);
+  async findOne(eventId: number, barId: number, overrideId: number, userId: number): Promise<BarRecipeOverride> {
+    await this.barsService.findOne(eventId, barId, userId);
 
     const override = await this.repository.findById(overrideId);
 
@@ -102,7 +103,7 @@ export class RecipeOverridesService {
     dto: UpdateRecipeOverrideDto,
   ): Promise<BarRecipeOverride> {
     await this.validateCanModify(eventId, barId, userId);
-    await this.findOne(eventId, barId, overrideId);
+    await this.findOne(eventId, barId, overrideId, userId);
 
     return this.repository.update(overrideId, dto);
   }
@@ -117,7 +118,7 @@ export class RecipeOverridesService {
     userId: number,
   ): Promise<void> {
     await this.validateCanModify(eventId, barId, userId);
-    await this.findOne(eventId, barId, overrideId);
+    await this.findOne(eventId, barId, overrideId, userId);
 
     await this.repository.delete(overrideId);
   }

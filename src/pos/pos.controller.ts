@@ -9,7 +9,8 @@ import {
 import { POSService } from './pos.service';
 import { CheckoutDto } from './dto';
 import { Roles } from '../auth/decorators';
-import { UserRole } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User, UserRole } from '@prisma/client';
 
 @Controller('events/:eventId/pos')
 export class POSController {
@@ -34,8 +35,9 @@ export class POSController {
   @Roles(UserRole.cashier, UserRole.manager, UserRole.admin)
   checkout(
     @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
     @Body() dto: CheckoutDto,
   ) {
-    return this.posService.checkout(eventId, dto);
+    return this.posService.checkout(eventId, user.id, dto);
   }
 }

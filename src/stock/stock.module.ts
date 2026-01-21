@@ -10,6 +10,6 @@ import { SuppliersModule } from '../suppliers/suppliers.module';
   imports: [BarsModule, EventsModule, SuppliersModule],
   controllers: [StockController],
   providers: [StockService, StockRepository],
-  exports: [StockService],
+  exports: [StockService, StockRepository],
 })
 export class StockModule {}

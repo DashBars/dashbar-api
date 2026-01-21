@@ -21,6 +21,9 @@ import { TransfersModule } from './transfers/transfers.module';
 import { ReportsModule } from './reports/reports.module';
 import { POSModule } from './pos/pos.module';
 import { ConsignmentModule } from './consignment/consignment.module';
+import { DrinksModule } from './drinks/drinks.module';
+import { VenuesModule } from './venues/venues.module';
+import { ManagerInventoryModule } from './manager-inventory/manager-inventory.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 
@@ -49,6 +52,9 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ReportsModule,
     POSModule,
     ConsignmentModule,
+    DrinksModule,
+    VenuesModule,
+    ManagerInventoryModule,
   ],
   providers: [
     {

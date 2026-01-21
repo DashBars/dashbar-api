@@ -338,8 +338,11 @@ export class ReportsRepository {
     });
 
     return events.map((event) => {
+      if (!event.startedAt || !event.finishedAt) {
+        throw new Error(`Event ${event.id} is missing required timestamps`);
+      }
       const startedAt = new Date(event.startedAt);
-      const finishedAt = new Date(event.finishedAt!);
+      const finishedAt = new Date(event.finishedAt);
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       const durationHours = Math.round((durationMs / 3600000) * 100) / 100;
 

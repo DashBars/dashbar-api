@@ -6,6 +6,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AlarmsRepository } from './alarms.repository';
 import { EventsService } from '../events/events.service';
+import { BarsService } from '../bars/bars.service';
 import { CreateThresholdDto, UpdateThresholdDto } from './dto';
 import { NotOwnerException } from '../common/exceptions';
 import {
@@ -13,6 +14,7 @@ import {
   StockAlert,
   AlertType,
   AlertStatus,
+  BarStatus,
 } from '@prisma/client';
 import {
   DonorSuggestion,
@@ -24,6 +26,7 @@ export class AlarmsService {
   constructor(
     private readonly repository: AlarmsRepository,
     private readonly eventsService: EventsService,
+    private readonly barsService: BarsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -354,6 +357,9 @@ export class AlarmsService {
       suggestedDonors: donors,
       externalNeeded,
     });
+
+    // Update bar status to lowStock when low stock alert is created
+    await this.barsService.updateBarStatus(barId, BarStatus.lowStock);
 
     // Emit event for WebSocket broadcast
     this.eventEmitter.emit('alert.created', {

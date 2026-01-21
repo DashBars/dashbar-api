@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Event } from '@prisma/client';
+import { Event, Prisma } from '@prisma/client';
 
 @Injectable()
 export class EventsRepository {
@@ -28,6 +28,51 @@ export class EventsRepository {
         bars: true,
         eventRecipes: true,
         eventPrices: true,
+      },
+    });
+  }
+
+  async findAllByOwner(ownerId: number): Promise<Event[]> {
+    return this.prisma.event.findMany({
+      where: { ownerId },
+      include: {
+        venue: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  async create(data: Prisma.EventCreateInput): Promise<Event> {
+    return this.prisma.event.create({ data });
+  }
+
+  async update(id: number, data: Prisma.EventUpdateInput): Promise<Event> {
+    return this.prisma.event.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async delete(id: number): Promise<void> {
+    await this.prisma.event.delete({
+      where: { id },
+    });
+  }
+
+  async startEvent(id: number): Promise<Event> {
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        startedAt: new Date(),
+      },
+    });
+  }
+
+  async finishEvent(id: number): Promise<Event> {
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        finishedAt: new Date(),
       },
     });
   }

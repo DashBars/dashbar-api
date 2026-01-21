@@ -24,8 +24,8 @@ export class StockService {
   /**
    * Get all stock for a specific bar
    */
-  async findAllByBar(eventId: number, barId: number): Promise<Stock[]> {
-    await this.barsService.findOne(eventId, barId);
+  async findAllByBar(eventId: number, barId: number, userId: number): Promise<Stock[]> {
+    await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.findByBarId(barId);
   }
 
@@ -35,6 +35,7 @@ export class StockService {
   async getStockSummary(
     eventId: number,
     barId: number,
+    userId: number,
   ): Promise<
     {
       drinkId: number;
@@ -44,23 +45,23 @@ export class StockService {
       supplierCount: number;
     }[]
   > {
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.getStockSummaryByBar(barId);
   }
 
   /**
    * Get stock breakdown by supplier
    */
-  async getStockBySupplier(eventId: number, barId: number): Promise<Stock[]> {
-    await this.barsService.findOne(eventId, barId);
+  async getStockBySupplier(eventId: number, barId: number, userId: number): Promise<Stock[]> {
+    await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.getStockBySupplier(barId);
   }
 
   /**
    * Get consignment stock available for return
    */
-  async getConsignmentStock(eventId: number, barId: number): Promise<Stock[]> {
-    await this.barsService.findOne(eventId, barId);
+  async getConsignmentStock(eventId: number, barId: number, userId: number): Promise<Stock[]> {
+    await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.getConsignmentStock(barId);
   }
 
@@ -79,7 +80,7 @@ export class StockService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Verify drink exists
     const drink = await this.stockRepository.findDrinkById(dto.drinkId);
@@ -118,7 +119,7 @@ export class StockService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     const results: Stock[] = [];
     for (const item of dto.items) {
@@ -169,7 +170,7 @@ export class StockService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Verify the stock entry exists
     const stock = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
@@ -193,10 +194,11 @@ export class StockService {
   async getStockByDrinkAcrossEvent(
     eventId: number,
     drinkId: number,
+    userId: number,
   ): Promise<
     { barId: number; barName: string; supplierId: number; supplierName: string; quantity: number }[]
   > {
-    const bars = await this.barsService.findAllByEvent(eventId);
+    const bars = await this.barsService.findAllByEvent(eventId, userId);
     const barIds = bars.map((b) => b.id);
 
     const stocks = await this.stockRepository.findByDrinkIdAndBarIds(drinkId, barIds);
@@ -225,7 +227,7 @@ export class StockService {
       throw new NotOwnerException();
     }
 
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
 
     // Verify supplier belongs to this user
     await this.suppliersService.validateOwnership(dto.supplierId, userId);
@@ -285,8 +287,9 @@ export class StockService {
   async getConsignmentReturns(
     eventId: number,
     barId: number,
+    userId: number,
   ): Promise<ConsignmentReturn[]> {
-    await this.barsService.findOne(eventId, barId);
+    await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.getConsignmentReturnsByBar(barId);
   }
 }

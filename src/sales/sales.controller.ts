@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { CreateSaleDto } from './dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '@prisma/client';
 
 @Controller('events/:eventId/bars/:barId/sales')
 export class SalesController {
@@ -32,8 +34,9 @@ export class SalesController {
   findAll(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.salesService.findAllByBar(eventId, barId);
+    return this.salesService.findAllByBar(eventId, barId, user.id);
   }
 
   /**
@@ -44,8 +47,9 @@ export class SalesController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
     @Param('saleId', ParseIntPipe) saleId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.salesService.findOne(eventId, barId, saleId);
+    return this.salesService.findOne(eventId, barId, saleId, user.id);
   }
 
   /**
@@ -56,8 +60,9 @@ export class SalesController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
     @Param('saleId', ParseIntPipe) saleId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.salesService.getSaleMovements(eventId, barId, saleId);
+    return this.salesService.getSaleMovements(eventId, barId, saleId, user.id);
   }
 }
 
@@ -72,7 +77,8 @@ export class InventoryMovementsController {
   findAll(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
   ) {
-    return this.salesService.getInventoryMovements(eventId, barId);
+    return this.salesService.getInventoryMovements(eventId, barId, user.id);
   }
 }

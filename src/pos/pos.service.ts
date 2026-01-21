@@ -25,9 +25,9 @@ export class POSService {
    * Process checkout with multiple items
    * Creates individual sales for each item and returns a receipt
    */
-  async checkout(eventId: number, dto: CheckoutDto): Promise<Receipt> {
+  async checkout(eventId: number, userId: number, dto: CheckoutDto): Promise<Receipt> {
     // 1. Validate bar belongs to event
-    const bar = await this.barsService.findOne(eventId, dto.barId);
+    const bar = await this.barsService.findOne(eventId, dto.barId, userId);
 
     // 2. Get catalog with resolved prices
     const catalog = await this.catalogService.getCatalog(eventId);
