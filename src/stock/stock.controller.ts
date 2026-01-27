@@ -8,7 +8,11 @@ import {
   ParseIntPipe,
 } from '@nestjs/common';
 import { StockService } from './stock.service';
-import { UpsertStockDto, BulkUpsertStockDto, CreateConsignmentReturnDto } from './dto';
+import {
+  UpsertStockDto,
+  BulkUpsertStockDto,
+  CreateConsignmentReturnDto,
+} from './dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '@prisma/client';
 

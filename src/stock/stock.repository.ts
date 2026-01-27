@@ -20,6 +20,16 @@ export class StockRepository {
     });
   }
 
+  async findByBarDrinkSupplier(
+    barId: number,
+    drinkId: number,
+  ): Promise<Stock[]> {
+    return this.prisma.stock.findMany({
+      where: { barId, drinkId },
+      include: { drink: true, supplier: true },
+    });
+  }
+
   async findByBarIdDrinkIdAndSupplierId(
     barId: number,
     drinkId: number,

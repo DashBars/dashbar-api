@@ -8,9 +8,18 @@ import { StockRepository } from './stock.repository';
 import { BarsService } from '../bars/bars.service';
 import { EventsService } from '../events/events.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
-import { UpsertStockDto, BulkUpsertStockDto, CreateConsignmentReturnDto } from './dto';
+import {
+  UpsertStockDto,
+  BulkUpsertStockDto,
+  CreateConsignmentReturnDto,
+  AssignStockDto,
+  MoveStockDto,
+  ReturnStockDto,
+} from './dto';
 import { NotOwnerException } from '../common/exceptions';
-import { Stock, ConsignmentReturn, OwnershipMode } from '@prisma/client';
+import { Stock, ConsignmentReturn, OwnershipMode, StockLocationType, StockMovementReason, MovementType } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { GlobalInventoryService } from '../global-inventory/global-inventory.service';
 
 @Injectable()
 export class StockService {
@@ -19,6 +28,8 @@ export class StockService {
     private readonly barsService: BarsService,
     private readonly eventsService: EventsService,
     private readonly suppliersService: SuppliersService,
+    private readonly prisma: PrismaService,
+    private readonly globalInventoryService: GlobalInventoryService,
   ) {}
 
   /**
@@ -291,5 +302,310 @@ export class StockService {
   ): Promise<ConsignmentReturn[]> {
     await this.barsService.findOne(eventId, barId, userId);
     return this.stockRepository.getConsignmentReturnsByBar(barId);
+  }
+
+  /**
+   * Assign stock from global inventory to a bar
+   */
+  async assignStock(
+    userId: number,
+    dto: AssignStockDto,
+  ): Promise<{ stock: Stock; movement: any }> {
+    // Verify event ownership
+    const event = await this.eventsService.findByIdWithOwner(dto.eventId);
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
+    // Verify bar belongs to event
+    await this.barsService.findOne(dto.eventId, dto.barId, userId);
+
+    // Get global inventory entry
+    const globalInv = await this.globalInventoryService.findOne(
+      dto.globalInventoryId,
+      userId,
+    );
+
+    // Verify available quantity
+    const availableQuantity =
+      globalInv.totalQuantity - globalInv.allocatedQuantity;
+    if (dto.quantity > availableQuantity) {
+      throw new BadRequestException(
+        `Cannot assign ${dto.quantity} units. Only ${availableQuantity} available.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Update global inventory
+      await tx.globalInventory.update({
+        where: { id: dto.globalInventoryId },
+        data: {
+          allocatedQuantity: { increment: dto.quantity },
+        },
+      });
+
+      // Handle null supplier - use 0 as placeholder if needed
+      const supplierIdForStock = globalInv.supplierId ?? 0;
+
+      // Create or update stock in bar
+      const stock = await tx.stock.upsert({
+        where: {
+          barId_drinkId_supplierId: {
+            barId: dto.barId,
+            drinkId: globalInv.drinkId,
+            supplierId: supplierIdForStock,
+          },
+        },
+        create: {
+          barId: dto.barId,
+          drinkId: globalInv.drinkId,
+          supplierId: supplierIdForStock,
+          quantity: dto.quantity,
+          unitCost: globalInv.unitCost,
+          currency: globalInv.currency,
+          ownershipMode: globalInv.ownershipMode,
+        },
+        update: {
+          quantity: { increment: dto.quantity },
+        },
+        include: { drink: true, supplier: true },
+      });
+
+      // Create inventory movement
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          fromLocationType: StockLocationType.GLOBAL,
+          fromLocationId: null,
+          toLocationType: StockLocationType.BAR,
+          toLocationId: dto.barId,
+          barId: dto.barId, // Keep for backward compatibility
+          drinkId: globalInv.drinkId,
+          supplierId: supplierIdForStock,
+          quantity: dto.quantity,
+          type: MovementType.transfer_in,
+          reason: StockMovementReason.ASSIGN_TO_BAR,
+          performedById: userId,
+          globalInventoryId: dto.globalInventoryId,
+          notes: dto.notes,
+        },
+      });
+
+      return { stock, movement };
+    });
+  }
+
+  /**
+   * Move stock between bars in the same event
+   */
+  async moveStock(
+    userId: number,
+    dto: MoveStockDto,
+  ): Promise<{ fromStock: Stock; toStock: Stock; movement: any }> {
+    // Verify event ownership
+    const event = await this.eventsService.findByIdWithOwner(dto.eventId);
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
+    // Verify both bars belong to event
+    await this.barsService.findOne(dto.eventId, dto.fromBarId, userId);
+    await this.barsService.findOne(dto.eventId, dto.toBarId, userId);
+
+    if (dto.fromBarId === dto.toBarId) {
+      throw new BadRequestException('Cannot move stock to the same bar');
+    }
+
+    // Get source stock
+    const sourceStock = await this.stockRepository.findByBarIdAndDrinkId(
+      dto.fromBarId,
+      dto.drinkId,
+    );
+
+    if (!sourceStock || sourceStock.length === 0) {
+      throw new NotFoundException(
+        `No stock found for drink ${dto.drinkId} in source bar`,
+      );
+    }
+
+    // Find matching stock entry (by supplier if available)
+    const stockToMove = sourceStock.find(
+      (s) => s.quantity >= dto.quantity,
+    ) || sourceStock[0];
+
+    if (stockToMove.quantity < dto.quantity) {
+      throw new BadRequestException(
+        `Cannot move ${dto.quantity} units. Only ${stockToMove.quantity} available in source bar.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Decrease source stock
+      const fromStock = await tx.stock.update({
+        where: {
+          barId_drinkId_supplierId: {
+            barId: dto.fromBarId,
+            drinkId: dto.drinkId,
+            supplierId: stockToMove.supplierId,
+          },
+        },
+        data: {
+          quantity: { decrement: dto.quantity },
+        },
+        include: { drink: true, supplier: true },
+      });
+
+      // Increase destination stock
+      const toStock = await tx.stock.upsert({
+        where: {
+          barId_drinkId_supplierId: {
+            barId: dto.toBarId,
+            drinkId: dto.drinkId,
+            supplierId: stockToMove.supplierId,
+          },
+        },
+        create: {
+          barId: dto.toBarId,
+          drinkId: dto.drinkId,
+          supplierId: stockToMove.supplierId,
+          quantity: dto.quantity,
+          unitCost: stockToMove.unitCost,
+          currency: stockToMove.currency,
+          ownershipMode: stockToMove.ownershipMode,
+        },
+        update: {
+          quantity: { increment: dto.quantity },
+        },
+        include: { drink: true, supplier: true },
+      });
+
+      // Create inventory movement
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          fromLocationType: StockLocationType.BAR,
+          fromLocationId: dto.fromBarId,
+          toLocationType: StockLocationType.BAR,
+          toLocationId: dto.toBarId,
+          barId: dto.toBarId, // Keep for backward compatibility
+          drinkId: dto.drinkId,
+          supplierId: stockToMove.supplierId,
+          quantity: dto.quantity,
+          type: MovementType.transfer_in,
+          reason: StockMovementReason.MOVE_BETWEEN_BARS,
+          performedById: userId,
+          notes: dto.notes,
+        },
+      });
+
+      return { fromStock, toStock, movement };
+    });
+  }
+
+  /**
+   * Return stock from bar to global inventory
+   */
+  async returnStock(
+    userId: number,
+    dto: ReturnStockDto,
+  ): Promise<{ globalInventory: any; movement: any }> {
+    // Verify event ownership
+    const event = await this.eventsService.findByIdWithOwner(dto.eventId);
+    if (!this.eventsService.isOwner(event, userId)) {
+      throw new NotOwnerException();
+    }
+
+    // Verify bar belongs to event
+    await this.barsService.findOne(dto.eventId, dto.barId, userId);
+
+    // Get bar stock
+    const barStock = await this.stockRepository.findByBarIdAndDrinkId(
+      dto.barId,
+      dto.drinkId,
+    );
+
+    if (!barStock || barStock.length === 0) {
+      throw new NotFoundException(
+        `No stock found for drink ${dto.drinkId} in bar`,
+      );
+    }
+
+    // Find matching stock entry
+    const stockToReturn = barStock.find((s) => s.quantity >= dto.quantity) || barStock[0];
+
+    if (stockToReturn.quantity < dto.quantity) {
+      throw new BadRequestException(
+        `Cannot return ${dto.quantity} units. Only ${stockToReturn.quantity} available in bar.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Decrease bar stock
+      await tx.stock.update({
+        where: {
+          barId_drinkId_supplierId: {
+            barId: dto.barId,
+            drinkId: dto.drinkId,
+            supplierId: stockToReturn.supplierId,
+          },
+        },
+        data: {
+          quantity: { decrement: dto.quantity },
+        },
+      });
+
+      // Find or create global inventory entry
+      const supplierIdForGlobal = stockToReturn.supplierId || null;
+      let globalInv = await tx.globalInventory.findFirst({
+        where: {
+          ownerId: userId,
+          drinkId: dto.drinkId,
+          supplierId: supplierIdForGlobal,
+        },
+      });
+
+      if (!globalInv) {
+        globalInv = await tx.globalInventory.create({
+          data: {
+            ownerId: userId,
+            drinkId: dto.drinkId,
+            supplierId: supplierIdForGlobal,
+            totalQuantity: 0,
+            allocatedQuantity: 0,
+            unitCost: stockToReturn.unitCost,
+            currency: stockToReturn.currency,
+            ownershipMode: stockToReturn.ownershipMode,
+          },
+        });
+      }
+
+      // Update global inventory
+      const updatedGlobalInv = await tx.globalInventory.update({
+        where: { id: globalInv.id },
+        data: {
+          totalQuantity: { increment: dto.quantity },
+          allocatedQuantity: { decrement: dto.quantity },
+        },
+      });
+
+      // Create inventory movement
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          fromLocationType: StockLocationType.BAR,
+          fromLocationId: dto.barId,
+          toLocationType: StockLocationType.GLOBAL,
+          toLocationId: null,
+          barId: dto.barId, // Keep for backward compatibility
+          drinkId: dto.drinkId,
+          supplierId: stockToReturn.supplierId,
+          quantity: dto.quantity,
+          type: MovementType.transfer_in,
+          reason: StockMovementReason.RETURN_TO_GLOBAL,
+          performedById: userId,
+          globalInventoryId: globalInv.id,
+          notes: dto.notes,
+        },
+      });
+
+      return { globalInventory: updatedGlobalInv, movement };
+    });
   }
 }

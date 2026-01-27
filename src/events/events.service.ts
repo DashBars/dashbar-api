@@ -3,7 +3,7 @@ import { EventsRepository } from './events.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto, UpdateEventDto } from './dto';
 import { NotOwnerException } from '../common/exceptions';
-import { Event } from '@prisma/client';
+import { Event, EventStatus } from '@prisma/client';
 
 @Injectable()
 export class EventsService {
@@ -52,10 +52,21 @@ export class EventsService {
       throw new NotFoundException(`Venue with ID ${dto.venueId} not found`);
     }
 
+    // Validate scheduledStartAt is in the future if provided
+    if (dto.scheduledStartAt) {
+      const scheduledDate = new Date(dto.scheduledStartAt);
+      const now = new Date();
+      if (scheduledDate <= now) {
+        throw new BadRequestException('Scheduled start time must be in the future');
+      }
+    }
+
     return this.eventsRepository.create({
       name: dto.name,
       description: dto.description,
-      startedAt: dto.startedAt ? new Date(dto.startedAt) : null, // Can be scheduled date or null
+      status: EventStatus.upcoming,
+      scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : null,
+      startedAt: null, // Will be set when event is activated
       finishedAt: null,
       owner: { connect: { id: ownerId } },
       venue: { connect: { id: dto.venueId } },
@@ -63,13 +74,20 @@ export class EventsService {
   }
 
   /**
-   * Update an event
+   * Update an event (only allowed when status is 'upcoming')
    */
   async update(eventId: number, ownerId: number, dto: UpdateEventDto): Promise<Event> {
     const event = await this.findByIdWithOwner(eventId);
 
     if (!this.isOwner(event, ownerId)) {
       throw new NotOwnerException();
+    }
+
+    // Only allow updates when event is upcoming
+    if (event.status !== EventStatus.upcoming) {
+      throw new BadRequestException(
+        `Cannot update event with status '${event.status}'. Only upcoming events can be updated.`
+      );
     }
 
     // Validate venue if provided
@@ -86,20 +104,21 @@ export class EventsService {
     const updateData: any = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.description !== undefined) updateData.description = dto.description;
-    // Only allow updating startedAt if event hasn't been manually started yet
-    // (i.e., if startedAt is null or in the future, it's still a scheduled date)
-    if (dto.startedAt !== undefined) {
-      const event = await this.findByIdWithOwner(eventId);
-      const now = new Date();
-      const currentStartedAt = event.startedAt ? new Date(event.startedAt) : null;
-      
-      // Only allow update if event hasn't been manually started (startedAt is null or future)
-      if (!currentStartedAt || currentStartedAt > now) {
-        updateData.startedAt = dto.startedAt ? new Date(dto.startedAt) : null;
+    
+    // Update scheduledStartAt (must be in the future)
+    if (dto.scheduledStartAt !== undefined) {
+      if (dto.scheduledStartAt) {
+        const scheduledDate = new Date(dto.scheduledStartAt);
+        const now = new Date();
+        if (scheduledDate <= now) {
+          throw new BadRequestException('Scheduled start time must be in the future');
+        }
+        updateData.scheduledStartAt = scheduledDate;
       } else {
-        throw new BadRequestException('Cannot update scheduled start time for an event that has already started');
+        updateData.scheduledStartAt = null;
       }
     }
+    
     if (dto.venueId !== undefined) {
       updateData.venue = { connect: { id: dto.venueId } };
     }
@@ -108,7 +127,7 @@ export class EventsService {
   }
 
   /**
-   * Delete an event
+   * Delete an event (only allowed when status is 'upcoming')
    */
   async delete(eventId: number, ownerId: number): Promise<void> {
     const event = await this.findByIdWithOwner(eventId);
@@ -117,52 +136,89 @@ export class EventsService {
       throw new NotOwnerException();
     }
 
+    // Only allow delete when event is upcoming
+    if (event.status !== EventStatus.upcoming) {
+      throw new BadRequestException(
+        `Cannot delete event with status '${event.status}'. Only upcoming events can be deleted. Use archive instead.`
+      );
+    }
+
     await this.eventsRepository.delete(eventId);
   }
 
   /**
-   * Start an event (overwrite startedAt with current date/time)
+   * Start an event (activate)
    * This sets the actual start time, overwriting any scheduled start time
    * Also opens all bars in the event (changes status from closed to open)
+   * @deprecated Use activateEvent instead
    */
   async startEvent(eventId: number, ownerId: number): Promise<Event> {
+    return this.activateEvent(eventId, ownerId, { barIds: undefined });
+  }
+
+  /**
+   * Activate an event (set startedAt to current date/time and update status)
+   * Also opens selected bars in the event
+   */
+  async activateEvent(
+    eventId: number,
+    ownerId: number,
+    dto: { barIds?: number[] },
+  ): Promise<Event> {
     const event = await this.findByIdWithOwner(eventId);
 
     if (!this.isOwner(event, ownerId)) {
       throw new NotOwnerException();
     }
 
-    // Validate event can be started
-    // Check if event is already active (startedAt exists and is in the past)
-    if (event.startedAt !== null) {
-      const startedAtDate = new Date(event.startedAt);
+    // Only allow activation when event is upcoming
+    if (event.status !== EventStatus.upcoming) {
+      throw new BadRequestException('Only upcoming events can be activated');
+    }
+
+    // Validate scheduledStartAt is not in the future
+    if (event.scheduledStartAt) {
+      const scheduledDate = new Date(event.scheduledStartAt);
       const now = new Date();
-      if (startedAtDate <= now) {
-        throw new BadRequestException('Event has already been started');
+      if (scheduledDate > now) {
+        throw new BadRequestException(
+          'Cannot activate event before scheduled start time'
+        );
       }
     }
 
-    if (event.finishedAt !== null) {
-      throw new BadRequestException('Cannot start an event that has already been finished');
-    }
-
-    // Overwrite startedAt with current date/time (actual start)
-    const updatedEvent = await this.eventsRepository.startEvent(eventId);
-
-    // Open all bars in the event (change status from closed to open)
-    // This is done in a transaction to ensure consistency
-    await this.prisma.$transaction(async (tx) => {
-      await tx.bar.updateMany({
-        where: { eventId, status: 'closed' },
-        data: { status: 'open' },
+    return this.prisma.$transaction(async (tx) => {
+      // Update event status and startedAt
+      const updated = await tx.event.update({
+        where: { id: eventId },
+        data: {
+          status: EventStatus.active,
+          startedAt: new Date(),
+        },
       });
-    });
 
-    return updatedEvent;
+      // Get bars to open (all if barIds not provided)
+      const barIds = dto.barIds && dto.barIds.length > 0
+        ? dto.barIds
+        : (await tx.bar.findMany({
+            where: { eventId },
+            select: { id: true },
+          })).map((b) => b.id);
+
+      // Open selected bars
+      if (barIds.length > 0) {
+        await tx.bar.updateMany({
+          where: { eventId, id: { in: barIds } },
+          data: { status: 'open' },
+        });
+      }
+
+      return updated;
+    });
   }
 
   /**
-   * Finish an event (set finishedAt to now)
+   * Finish an event (set finishedAt to now and update status)
    * Also closes all bars in the event (changes status to closed)
    */
   async finishEvent(eventId: number, ownerId: number): Promise<Event> {
@@ -172,7 +228,14 @@ export class EventsService {
       throw new NotOwnerException();
     }
 
-    // Validate event can be finished
+    // Only allow finish when event is active
+    if (event.status !== EventStatus.active) {
+      throw new BadRequestException(
+        `Cannot finish event with status '${event.status}'. Only active events can be finished.`
+      );
+    }
+
+    // Validate event has been started
     if (event.startedAt === null) {
       throw new BadRequestException('Cannot finish an event that has not been started');
     }
@@ -181,19 +244,97 @@ export class EventsService {
       throw new BadRequestException('Event has already been finished');
     }
 
-    // Set finishedAt to current date/time
-    const updatedEvent = await this.eventsRepository.finishEvent(eventId);
+    // Set finishedAt to current date/time and update status
+    return this.prisma.$transaction(async (tx) => {
+      const updatedEvent = await tx.event.update({
+        where: { id: eventId },
+        data: {
+          status: EventStatus.finished,
+          finishedAt: new Date(),
+        },
+      });
 
-    // Close all bars in the event (change status to closed)
-    // This is done in a transaction to ensure consistency
-    await this.prisma.$transaction(async (tx) => {
+      // Close all bars in the event
       await tx.bar.updateMany({
         where: { eventId },
         data: { status: 'closed' },
       });
-    });
 
-    return updatedEvent;
+      // Get or create return policy
+      let returnPolicy = await tx.returnPolicy.findUnique({
+        where: { eventId },
+      });
+
+      if (!returnPolicy) {
+        returnPolicy = await tx.returnPolicy.create({
+          data: {
+            eventId,
+            ownerId,
+            autoReturnToGlobal: true,
+            requireApproval: false,
+          },
+        });
+      }
+
+      // If autoReturnToGlobal is enabled, create stock returns for remaining stock
+      if (returnPolicy.autoReturnToGlobal) {
+        // Get all bars in the event
+        const bars = await tx.bar.findMany({
+          where: { eventId },
+          select: { id: true },
+        });
+
+        // Get all stock from all bars
+        const allStock = await tx.stock.findMany({
+          where: { barId: { in: bars.map((b) => b.id) } },
+          include: { drink: true, supplier: true },
+        });
+
+        // Create stock returns for each stock item
+        for (const stock of allStock) {
+          await tx.stockReturn.create({
+            data: {
+              policyId: returnPolicy.id,
+              barId: stock.barId,
+              drinkId: stock.drinkId,
+              supplierId: stock.supplierId || null,
+              quantity: stock.quantity,
+              unitCost: stock.unitCost,
+              currency: stock.currency,
+              ownershipMode: stock.ownershipMode,
+              status: returnPolicy.requireApproval ? 'pending' : 'approved',
+              requestedAt: new Date(),
+              requestedById: ownerId,
+            },
+          });
+        }
+      }
+
+      return updatedEvent;
+    });
+  }
+
+  /**
+   * Archive an event (only allowed when status is 'finished')
+   */
+  async archiveEvent(eventId: number, ownerId: number): Promise<Event> {
+    const event = await this.findByIdWithOwner(eventId);
+
+    if (!this.isOwner(event, ownerId)) {
+      throw new NotOwnerException();
+    }
+
+    // Only allow archive when event is finished
+    if (event.status !== EventStatus.finished) {
+      throw new BadRequestException(
+        `Cannot archive event with status '${event.status}'. Only finished events can be archived.`
+      );
+    }
+
+    return this.eventsRepository.update(eventId, {
+      status: EventStatus.archived,
+      archivedAt: new Date(),
+    });
   }
 
   /**
@@ -221,25 +362,34 @@ export class EventsService {
   }
 
   /**
-   * Get event status
-   * UPCOMING: startedAt == null OR startedAt is in the future (scheduled but not started)
-   * ACTIVE: startedAt != null AND startedAt is in the past/present AND finishedAt == null
-   * FINISHED: finishedAt != null
+   * Get event status (from persisted field, with reconciliation if needed)
+   * This method returns the persisted status, but can also calculate it for validation
    */
-  getEventStatus(event: Event): 'upcoming' | 'active' | 'finished' {
+  getEventStatus(event: Event): EventStatus {
+    // Return persisted status (source of truth)
+    return event.status;
+  }
+
+  /**
+   * Calculate event status from dates (for reconciliation)
+   */
+  calculateEventStatus(event: Event): EventStatus {
     if (event.finishedAt !== null) {
-      return 'finished';
+      return EventStatus.finished;
+    }
+    if (event.archivedAt !== null) {
+      return EventStatus.archived;
     }
     if (event.startedAt !== null) {
       const startedAtDate = new Date(event.startedAt);
       const now = new Date();
       // If startedAt is in the past or present, event is active
       if (startedAtDate <= now) {
-        return 'active';
+        return EventStatus.active;
       }
       // If startedAt is in the future, it's still upcoming (scheduled)
-      return 'upcoming';
+      return EventStatus.upcoming;
     }
-    return 'upcoming';
+    return EventStatus.upcoming;
   }
 }

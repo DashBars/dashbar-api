@@ -63,6 +63,7 @@ export class EventsRepository {
     return this.prisma.event.update({
       where: { id },
       data: {
+        status: 'active',
         startedAt: new Date(),
       },
     });
@@ -72,6 +73,7 @@ export class EventsRepository {
     return this.prisma.event.update({
       where: { id },
       data: {
+        status: 'finished',
         finishedAt: new Date(),
       },
     });

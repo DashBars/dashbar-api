@@ -57,6 +57,30 @@ enum OwnershipMode {
   consignment
 }
 
+enum StockLocationType {
+  GLOBAL // Inventario global/almacén
+  BAR // Barra específica
+  PROVIDER // Proveedor (para devoluciones)
+}
+
+enum StockMovementReason {
+  ASSIGN_TO_BAR // Asignación desde global a barra
+  MOVE_BETWEEN_BARS // Movimiento entre barras del mismo evento
+  RETURN_TO_GLOBAL // Devolución desde barra a global
+  SALE_DECREMENT // Venta (disminución por consumo)
+  ADJUSTMENT // Ajuste manual
+  RETURN_TO_PROVIDER // Devolución a proveedor (consignación)
+  INITIAL_LOAD // Carga inicial en inventario global
+}
+
+enum ReturnStatus {
+  pending // Pendiente de aprobación
+  approved // Aprobado, listo para ejecutar
+  completed // Completado (stock devuelto)
+  rejected // Rechazado
+  cancelled // Cancelado
+}
+
 enum StockDepletionPolicy {
   cheapest_first // Deduct cheapest stock first (optimizes costs)
   fifo // First in, first out (by receivedAt)
@@ -92,27 +116,55 @@ enum TransferStatus {
   cancelled // Request cancelled
 }
 
+enum EventStatus {
+  upcoming
+  active
+  finished
+  archived
+}
+
+enum VenueType {
+  outdoor
+  indoor
+  nose // "no sé" / sin especificar
+}
+
 model User {
   id       Int      @id @default(autoincrement())
   email    String   @unique
   password String
   role     UserRole
 
-  eventsOwned        Event[]             @relation("EventOwner")
-  suppliers          Supplier[]
-  consignmentReturns ConsignmentReturn[]
-  venues             Venue[]
-  managerInventories ManagerInventory[]
+  eventsOwned           Event[]             @relation("EventOwner")
+  suppliers             Supplier[]
+  consignmentReturns    ConsignmentReturn[]
+  venues                Venue[]
+  managerInventories    ManagerInventory[]
+  globalInventories     GlobalInventory[]
+  inventoryMovements    InventoryMovement[]
+  returnPolicies        ReturnPolicy[]
+  stockReturnsRequested StockReturn[]       @relation("ReturnRequestedBy")
+  stockReturnsApproved  StockReturn[]       @relation("ReturnApprovedBy")
+  stockReturnsCompleted StockReturn[]       @relation("ReturnCompletedBy")
 }
 
 model Venue {
-  id          Int     @id @default(autoincrement())
-  name        String
-  description String?
-  address     String
-  city        String
-  country     String
-  capacity    Int
+  id           Int       @id @default(autoincrement())
+  name         String
+  address      String
+  addressLine2 String?   @map("address_line_2") // Complemento
+  city         String
+  state        String? // Provincia/estado
+  country      String
+  postalCode   String?   @map("postal_code") // Código postal
+  capacity     Int
+  venueType    VenueType @default(nose) @map("venue_type") // Chip/tag
+
+  // Campos normalizados de Google Places API
+  placeId          String? @unique @map("place_id") // Google Places ID
+  lat              Float? // Latitud
+  lng              Float? // Longitud
+  formattedAddress String? @map("formatted_address") // Dirección normalizada completa
 
   ownerId Int?  @map("owner_id")
   owner   User? @relation(fields: [ownerId], references: [id])
@@ -123,11 +175,14 @@ model Venue {
 }
 
 model Event {
-  id          Int       @id @default(autoincrement())
-  name        String
-  description String?
-  startedAt   DateTime? @map("started_at")
-  finishedAt  DateTime? @map("finished_at")
+  id               Int         @id @default(autoincrement())
+  name             String
+  description      String?
+  status           EventStatus @default(upcoming) // Estado persistido
+  scheduledStartAt DateTime?   @map("scheduled_start_at") // Fecha/hora programada
+  startedAt        DateTime?   @map("started_at") // Actual start time (manual)
+  finishedAt       DateTime?   @map("finished_at")
+  archivedAt       DateTime?   @map("archived_at") // Fecha de archivado
 
   stockDepletionPolicy StockDepletionPolicy @default(cheapest_first) @map("stock_depletion_policy")
 
@@ -146,6 +201,7 @@ model Event {
   transfers            StockTransfer[]
   report               EventReport?
   inventoryAllocations ManagerInventoryAllocation[]
+  returnPolicy         ReturnPolicy?
 
   @@map("Event")
 }
@@ -186,7 +242,7 @@ model Bar {
   id     Int       @id @default(autoincrement())
   name   String
   type   BarType
-  status BarStatus
+  status BarStatus @default(closed) // Default closed para eventos upcoming
 
   eventId Int
   event   Event @relation(fields: [eventId], references: [id])
@@ -200,6 +256,7 @@ model Bar {
   transfersReceived    StockTransfer[]              @relation("TransferReceiver")
   transfersDonated     StockTransfer[]              @relation("TransferDonor")
   inventoryAllocations ManagerInventoryAllocation[]
+  stockReturns         StockReturn[]
 }
 
 model Stock {
@@ -304,6 +361,8 @@ model Drink {
   alerts             StockAlert[]
   transfers          StockTransfer[]
   managerInventories ManagerInventory[]
+  globalInventories  GlobalInventory[]
+  stockReturns       StockReturn[]
 }
 
 model Provider {
@@ -362,6 +421,8 @@ model Supplier {
   consignmentReturns ConsignmentReturn[]
   inventoryMovements InventoryMovement[]
   managerInventories ManagerInventory[]
+  globalInventories  GlobalInventory[]
+  stockReturns       StockReturn[]
 
   @@map("supplier")
 }
@@ -404,21 +465,39 @@ model BarRecipeOverride {
   @@map("bar_recipe_override")
 }
 
-// Inventory movement for audit trail
+// Inventory movement for audit trail (extended with location tracking)
 model InventoryMovement {
-  id          Int          @id @default(autoincrement())
-  barId       Int          @map("bar_id")
-  drinkId     Int          @map("drink_id")
-  supplierId  Int          @map("supplier_id")
+  id Int @id @default(autoincrement())
+
+  // Location tracking (from/to)
+  fromLocationType StockLocationType? @map("from_location_type")
+  fromLocationId   Int?               @map("from_location_id") // barId o null (global)
+  toLocationType   StockLocationType? @map("to_location_type")
+  toLocationId     Int?               @map("to_location_id") // barId o null (global)
+
+  // Campos existentes (barId deprecated, usar toLocationId)
+  barId       Int?                 @map("bar_id") // DEPRECATED: usar toLocationId
+  drinkId     Int                  @map("drink_id")
+  supplierId  Int                  @map("supplier_id")
   quantity    Int // Negative for deductions, positive for additions
   type        MovementType
-  referenceId Int?         @map("reference_id") // saleId, returnId, etc.
+  reason      StockMovementReason? // Razón específica del movimiento
+  referenceId Int?                 @map("reference_id") // saleId, returnId, etc.
   notes       String?
-  createdAt   DateTime     @default(now()) @map("created_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
 
-  bar      Bar      @relation(fields: [barId], references: [id])
+  // Audit
+  performedById Int?  @map("performed_by_id") // Usuario que ejecutó
+  performedBy   User? @relation(fields: [performedById], references: [id])
+
+  // Relaciones
+  bar      Bar?     @relation(fields: [barId], references: [id])
   drink    Drink    @relation(fields: [drinkId], references: [id])
   supplier Supplier @relation(fields: [supplierId], references: [id])
+
+  // Relación con inventario global
+  globalInventoryId Int?             @map("global_inventory_id")
+  globalInventory   GlobalInventory? @relation(fields: [globalInventoryId], references: [id])
 
   @@map("inventory_movement")
 }
@@ -592,4 +671,92 @@ model ManagerInventoryAllocation {
   bar              Bar              @relation(fields: [barId], references: [id])
 
   @@map("manager_inventory_allocation")
+}
+
+// Inventario global (almacén general) independiente de eventos/barras
+model GlobalInventory {
+  id            Int           @id @default(autoincrement())
+  ownerId       Int           @map("owner_id")
+  drinkId       Int           @map("drink_id")
+  supplierId    Int?          @map("supplier_id") // Opcional: puede ser stock sin proveedor
+  ownershipMode OwnershipMode @default(purchased) @map("ownership_mode")
+
+  totalQuantity     Int     @map("total_quantity") // Cantidad total disponible
+  allocatedQuantity Int     @default(0) @map("allocated_quantity") // Asignada a barras
+  unitCost          Int     @map("unit_cost") // Costo unitario en centavos
+  currency          String  @default("ARS")
+  sku               String? // SKU del proveedor
+
+  receivedAt    DateTime @default(now()) @map("received_at")
+  lastUpdatedAt DateTime @default(now()) @updatedAt @map("last_updated_at")
+
+  owner    User      @relation(fields: [ownerId], references: [id])
+  drink    Drink     @relation(fields: [drinkId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+
+  // Relaciones con movimientos
+  stockMovements InventoryMovement[]
+
+  @@unique([ownerId, drinkId, supplierId])
+  @@map("global_inventory")
+}
+
+// Política de devolución para eventos
+model ReturnPolicy {
+  id      Int @id @default(autoincrement())
+  eventId Int @unique @map("event_id")
+  ownerId Int @map("owner_id")
+
+  // Configuración
+  autoReturnToGlobal Boolean @default(true) @map("auto_return_to_global") // Auto-devolver stock sobrante
+  requireApproval    Boolean @default(false) @map("require_approval") // Requiere aprobación para devoluciones
+
+  // Tracking
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  owner User  @relation(fields: [ownerId], references: [id])
+  event Event @relation(fields: [eventId], references: [id])
+
+  returns StockReturn[]
+
+  @@map("return_policy")
+}
+
+// Devolución de stock
+model StockReturn {
+  id         Int  @id @default(autoincrement())
+  policyId   Int  @map("policy_id")
+  barId      Int  @map("bar_id")
+  drinkId    Int  @map("drink_id")
+  supplierId Int? @map("supplier_id")
+
+  quantity      Int
+  unitCost      Int           @map("unit_cost")
+  currency      String        @default("ARS")
+  ownershipMode OwnershipMode @map("ownership_mode")
+
+  status ReturnStatus @default(pending)
+  reason String? // Motivo de devolución
+  notes  String?
+
+  // Tracking
+  requestedAt DateTime? @map("requested_at")
+  approvedAt  DateTime? @map("approved_at")
+  completedAt DateTime? @map("completed_at")
+
+  requestedById Int? @map("requested_by_id")
+  approvedById  Int? @map("approved_by_id")
+  completedById Int? @map("completed_by_id")
+
+  requestedBy User? @relation("ReturnRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User? @relation("ReturnApprovedBy", fields: [approvedById], references: [id])
+  completedBy User? @relation("ReturnCompletedBy", fields: [completedById], references: [id])
+
+  policy   ReturnPolicy @relation(fields: [policyId], references: [id])
+  bar      Bar          @relation(fields: [barId], references: [id])
+  drink    Drink        @relation(fields: [drinkId], references: [id])
+  supplier Supplier?    @relation(fields: [supplierId], references: [id])
+
+  @@map("stock_return")
 }

@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min, IsDateString } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min, IsDateString, ValidateIf } from 'class-validator';
 
 export class UpdateEventDto {
   @IsOptional()
@@ -16,5 +16,13 @@ export class UpdateEventDto {
 
   @IsOptional()
   @IsDateString()
-  startedAt?: string;
+  @ValidateIf((o) => {
+    if (o.scheduledStartAt) {
+      const date = new Date(o.scheduledStartAt);
+      const now = new Date();
+      return date > now; // Solo permitir fechas futuras
+    }
+    return true;
+  })
+  scheduledStartAt?: string; // Fecha/hora programada (debe ser futura)
 }

@@ -38,7 +38,15 @@ BEGIN
   END IF;
 END $$;
 
--- Step 7: Add foreign key constraint
-ALTER TABLE "consignment_return" 
-ADD CONSTRAINT "consignment_return_performed_by_id_fkey" 
-FOREIGN KEY ("performed_by_id") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- Step 7: Add foreign key constraint (only if it doesn't exist)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conname = 'consignment_return_performed_by_id_fkey'
+  ) THEN
+    ALTER TABLE "consignment_return" 
+    ADD CONSTRAINT "consignment_return_performed_by_id_fkey" 
+    FOREIGN KEY ("performed_by_id") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;

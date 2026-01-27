@@ -24,6 +24,8 @@ import { ConsignmentModule } from './consignment/consignment.module';
 import { DrinksModule } from './drinks/drinks.module';
 import { VenuesModule } from './venues/venues.module';
 import { ManagerInventoryModule } from './manager-inventory/manager-inventory.module';
+import { GlobalInventoryModule } from './global-inventory/global-inventory.module';
+import { ReturnPolicyModule } from './return-policy/return-policy.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 
@@ -55,6 +57,8 @@ import { RolesGuard } from './auth/guards/roles.guard';
     DrinksModule,
     VenuesModule,
     ManagerInventoryModule,
+    GlobalInventoryModule,
+    ReturnPolicyModule,
   ],
   providers: [
     {

@@ -1,15 +1,17 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { BarsRepository } from './bars.repository';
 import { EventsService } from '../events/events.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateBarDto, UpdateBarDto } from './dto';
 import { NotOwnerException } from '../common/exceptions';
-import { Bar, BarType, BarStatus } from '@prisma/client';
+import { Bar, BarType, BarStatus, EventStatus, StockLocationType, StockMovementReason, MovementType } from '@prisma/client';
 
 @Injectable()
 export class BarsService {
   constructor(
     private readonly barsRepository: BarsRepository,
     private readonly eventsService: EventsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -22,15 +24,15 @@ export class BarsService {
       throw new NotOwnerException();
     }
 
-    // Cannot create bars for finished events
-    if (event.finishedAt !== null) {
-      throw new BadRequestException('Cannot create bars for a finished event');
+    // Only allow creating bars for upcoming events
+    if (event.status !== EventStatus.upcoming) {
+      throw new BadRequestException('Can only create bars for upcoming events');
     }
 
     return this.barsRepository.create({
       name: dto.name,
       type: dto.type,
-      status: dto.status,
+      status: dto.status || BarStatus.closed, // Default to closed for upcoming events
       event: { connect: { id: eventId } },
     });
   }
@@ -83,7 +85,7 @@ export class BarsService {
   }
 
   /**
-   * Delete a bar
+   * Delete a bar (only if event is upcoming, and return stock to global inventory)
    */
   async delete(eventId: number, barId: number, userId: number): Promise<void> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
@@ -92,8 +94,90 @@ export class BarsService {
       throw new NotOwnerException();
     }
 
-    await this.findOne(eventId, barId, userId); // Ensure bar exists in event and user owns it
-    await this.barsRepository.delete(barId);
+    // Only allow deleting bars from upcoming events
+    if (event.status !== EventStatus.upcoming) {
+      throw new BadRequestException('Can only delete bars from upcoming events');
+    }
+
+    const bar = await this.findOne(eventId, barId, userId); // Ensure bar exists in event and user owns it
+
+    return this.prisma.$transaction(async (tx) => {
+      // Get all stock from the bar
+      const barStock = await tx.stock.findMany({
+        where: { barId },
+        include: { drink: true, supplier: true },
+      });
+
+      // Return each stock item to global inventory
+      for (const stock of barStock) {
+        // Find or create GlobalInventory entry
+        let globalInv = await tx.globalInventory.findFirst({
+          where: {
+            ownerId: userId,
+            drinkId: stock.drinkId,
+            supplierId: stock.supplierId || null,
+          },
+        });
+
+        if (!globalInv) {
+          globalInv = await tx.globalInventory.create({
+            data: {
+              ownerId: userId,
+              drinkId: stock.drinkId,
+              supplierId: stock.supplierId || null,
+              totalQuantity: 0,
+              allocatedQuantity: 0,
+              unitCost: stock.unitCost,
+              currency: stock.currency,
+              ownershipMode: stock.ownershipMode,
+            },
+          });
+        }
+
+        // Increment global quantity and decrement allocated
+        await tx.globalInventory.update({
+          where: { id: globalInv.id },
+          data: {
+            totalQuantity: { increment: stock.quantity },
+            allocatedQuantity: { decrement: stock.quantity },
+          },
+        });
+
+        // Create inventory movement
+        await tx.inventoryMovement.create({
+          data: {
+            fromLocationType: StockLocationType.BAR,
+            fromLocationId: barId,
+            toLocationType: StockLocationType.GLOBAL,
+            toLocationId: null,
+            barId: barId, // Keep for backward compatibility
+            drinkId: stock.drinkId,
+            supplierId: stock.supplierId,
+            quantity: stock.quantity,
+            type: MovementType.transfer_in,
+            reason: StockMovementReason.RETURN_TO_GLOBAL,
+            performedById: userId,
+            globalInventoryId: globalInv.id,
+            notes: `Returned from bar ${bar.name} (deleted)`,
+          },
+        });
+      }
+
+      // Delete stock records
+      await tx.stock.deleteMany({
+        where: { barId },
+      });
+
+      // Delete ManagerInventoryAllocation if exists
+      await tx.managerInventoryAllocation.deleteMany({
+        where: { barId },
+      });
+
+      // Delete the bar
+      await tx.bar.delete({
+        where: { id: barId },
+      });
+    });
   }
 
   /**
