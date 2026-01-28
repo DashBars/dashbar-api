@@ -46,13 +46,13 @@ export class RecipesController {
     return this.recipesService.findOne(eventId, recipeId);
   }
 
-  @Get('cocktail/:cocktailId')
+  @Get('cocktail/:cocktailName')
   getRecipeForCocktail(
     @Param('eventId', ParseIntPipe) eventId: number,
-    @Param('cocktailId', ParseIntPipe) cocktailId: number,
+    @Param('cocktailName') cocktailName: string,
     @Query('barType') barType: BarType,
   ) {
-    return this.recipesService.getRecipeForCocktail(eventId, barType, cocktailId);
+    return this.recipesService.getRecipeForCocktail(eventId, barType, cocktailName);
   }
 
   @Put(':recipeId')

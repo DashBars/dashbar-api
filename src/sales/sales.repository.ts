@@ -24,16 +24,26 @@ export class SalesRepository {
   }
 
   /**
-   * Get event recipes for a cocktail by bar type
+   * Get event recipes for a cocktail by bar type and cocktail name
    */
-  async getEventRecipes(eventId: number, barType: string, cocktailId: number) {
+  async getEventRecipes(eventId: number, barType: string, cocktailName: string) {
     return this.prisma.eventRecipe.findMany({
       where: {
         eventId,
-        barType: barType as any,
-        cocktailId,
+        cocktailName,
+        barTypes: {
+          some: {
+            barType: barType as any,
+          },
+        },
       },
-      include: { drink: true },
+      include: {
+        components: {
+          include: {
+            drink: true,
+          },
+        },
+      },
     });
   }
 
@@ -53,6 +63,15 @@ export class SalesRepository {
   async getCocktailById(cocktailId: number) {
     return this.prisma.cocktail.findUnique({
       where: { id: cocktailId },
+    });
+  }
+
+  /**
+   * Get cocktail by name
+   */
+  async getCocktailByName(cocktailName: string) {
+    return this.prisma.cocktail.findFirst({
+      where: { name: cocktailName },
     });
   }
 

@@ -54,15 +54,19 @@ export class SalesService {
     }
 
     // 3. Resolve recipe (bar override > barType recipe)
-    const recipe = await this.resolveRecipe(bar.id, bar.type, bar.eventId, dto.cocktailId);
-    if (recipe.length === 0) {
+    const recipeResult = await this.resolveRecipe(bar.id, bar.type, bar.eventId, cocktail.name);
+    if (recipeResult.components.length === 0) {
       throw new BadRequestException(
         `No recipe found for cocktail "${cocktail.name}" in this bar`,
       );
     }
 
-    // 4. Calculate consumption per drink
-    const consumption = this.calculateConsumption(recipe, cocktail.volume, dto.quantity);
+    // 4. Calculate consumption per drink using glassVolume from recipe
+    const consumption = this.calculateConsumption(
+      recipeResult.components,
+      recipeResult.glassVolume,
+      dto.quantity,
+    );
 
     // 5. Plan depletions according to event's policy
     const depletions = await this.planDepletions(
@@ -98,32 +102,51 @@ export class SalesService {
   /**
    * Resolve recipe for a cocktail in a bar
    * Priority: BarRecipeOverride > EventRecipe by barType
+   * Returns recipe components and glass volume
    */
   private async resolveRecipe(
     barId: number,
     barType: string,
     eventId: number,
-    cocktailId: number,
-  ): Promise<RecipeComponent[]> {
+    cocktailName: string,
+  ): Promise<{ components: RecipeComponent[]; glassVolume: number }> {
     // First, check for bar-specific overrides
-    const overrides = await this.salesRepository.getBarRecipeOverrides(barId, cocktailId);
+    // Note: BarRecipeOverride still uses cocktailId, so we need to find cocktail by name first
+    const cocktail = await this.salesRepository.getCocktailByName(cocktailName);
+    if (cocktail) {
+      const overrides = await this.salesRepository.getBarRecipeOverrides(barId, cocktail.id);
 
-    if (overrides.length > 0) {
-      return overrides.map((o) => ({
-        drinkId: o.drinkId,
-        drinkName: (o as any).drink?.name || `Drink ${o.drinkId}`,
-        cocktailPercentage: o.cocktailPercentage,
-      }));
+      if (overrides.length > 0) {
+        // For overrides, use cocktail volume as glass volume
+        return {
+          components: overrides.map((o) => ({
+            drinkId: o.drinkId,
+            drinkName: (o as any).drink?.name || `Drink ${o.drinkId}`,
+            cocktailPercentage: o.cocktailPercentage,
+          })),
+          glassVolume: cocktail.volume,
+        };
+      }
     }
 
     // Fall back to event recipe by bar type
-    const eventRecipes = await this.salesRepository.getEventRecipes(eventId, barType, cocktailId);
+    const eventRecipes = await this.salesRepository.getEventRecipes(eventId, barType, cocktailName);
 
-    return eventRecipes.map((r) => ({
-      drinkId: r.drinkId,
-      drinkName: (r as any).drink?.name || `Drink ${r.drinkId}`,
-      cocktailPercentage: r.cocktailPercentage,
-    }));
+    if (eventRecipes.length === 0) {
+      return { components: [], glassVolume: cocktail?.volume || 200 };
+    }
+
+    // Use the first recipe found (should be unique per event + cocktailName)
+    const recipe = eventRecipes[0];
+
+    return {
+      components: recipe.components.map((c) => ({
+        drinkId: c.drinkId,
+        drinkName: (c as any).drink?.name || `Drink ${c.drinkId}`,
+        cocktailPercentage: c.percentage,
+      })),
+      glassVolume: recipe.glassVolume,
+    };
   }
 
   /**

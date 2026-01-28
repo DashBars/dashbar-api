@@ -209,19 +209,45 @@ model Event {
 // Recipes per bar type within an event
 // All bars of the same type share the same recipes
 model EventRecipe {
-  id                 Int     @id @default(autoincrement())
-  eventId            Int     @map("event_id")
-  barType            BarType @map("bar_type")
-  cocktailId         Int     @map("cocktail_id")
-  drinkId            Int     @map("drink_id")
-  cocktailPercentage Int     @map("cocktail_percentage") // %
+  id          Int     @id @default(autoincrement())
+  eventId     Int     @map("event_id")
+  cocktailName String @map("cocktail_name") // Nombre del trago a vender
+  glassVolume  Int     @map("glass_volume") // Volumen del vaso en ml
+  hasIce       Boolean @default(false) @map("has_ice") // Indica si lleva hielo
+  salePrice    Int     @map("sale_price") // Precio de venta en centavos
 
-  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  cocktail Cocktail @relation(fields: [cocktailId], references: [id])
-  drink    Drink    @relation(fields: [drinkId], references: [id])
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-  @@unique([eventId, barType, cocktailId, drinkId])
+  barTypes   EventRecipeBarType[]
+  components EventRecipeComponent[]
+
+  @@unique([eventId, cocktailName])
   @@map("event_recipe")
+}
+
+// Relación muchos-a-muchos entre EventRecipe y BarType
+model EventRecipeBarType {
+  eventRecipeId Int     @map("event_recipe_id")
+  barType       BarType @map("bar_type")
+
+  eventRecipe EventRecipe @relation(fields: [eventRecipeId], references: [id], onDelete: Cascade)
+
+  @@id([eventRecipeId, barType])
+  @@map("event_recipe_bar_type")
+}
+
+// Componentes de una receta (insumos con porcentajes)
+model EventRecipeComponent {
+  id            Int @id @default(autoincrement())
+  eventRecipeId Int @map("event_recipe_id")
+  drinkId       Int @map("drink_id")
+  percentage    Int // Porcentaje del insumo en el cocktail (1-100)
+
+  eventRecipe EventRecipe @relation(fields: [eventRecipeId], references: [id], onDelete: Cascade)
+  drink       Drink       @relation(fields: [drinkId], references: [id])
+
+  @@unique([eventRecipeId, drinkId])
+  @@map("event_recipe_component")
 }
 
 // Prices shared across the entire event (no bar or bar-type differentiation)
@@ -336,7 +362,6 @@ model Cocktail {
 
   products        Product[]
   recipeItems     Recipe[]
-  eventRecipes    EventRecipe[]
   eventPrices     EventPrice[]
   recipeOverrides BarRecipeOverride[]
   sales           Sale[]
@@ -351,18 +376,18 @@ model Drink {
   drinkType DrinkType
   volume    Int // ml
 
-  stocks             Stock[]
-  providers          DrinkProvider[]
-  recipeItems        Recipe[]
-  eventRecipes       EventRecipe[]
-  recipeOverrides    BarRecipeOverride[]
-  inventoryMovements InventoryMovement[]
-  thresholds         StockThreshold[]
-  alerts             StockAlert[]
-  transfers          StockTransfer[]
-  managerInventories ManagerInventory[]
-  globalInventories  GlobalInventory[]
-  stockReturns       StockReturn[]
+  stocks                Stock[]
+  providers             DrinkProvider[]
+  recipeItems           Recipe[]
+  eventRecipeComponents EventRecipeComponent[]
+  recipeOverrides       BarRecipeOverride[]
+  inventoryMovements    InventoryMovement[]
+  thresholds            StockThreshold[]
+  alerts                StockAlert[]
+  transfers             StockTransfer[]
+  managerInventories    ManagerInventory[]
+  globalInventories     GlobalInventory[]
+  stockReturns          StockReturn[]
 }
 
 model Provider {
