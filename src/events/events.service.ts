@@ -338,6 +338,29 @@ export class EventsService {
   }
 
   /**
+   * Unarchive an event (only allowed when status is 'archived')
+   * Returns event back to 'finished' state.
+   */
+  async unarchiveEvent(eventId: number, ownerId: number): Promise<Event> {
+    const event = await this.findByIdWithOwner(eventId);
+
+    if (!this.isOwner(event, ownerId)) {
+      throw new NotOwnerException();
+    }
+
+    if (event.status !== EventStatus.archived) {
+      throw new BadRequestException(
+        `Cannot unarchive event with status '${event.status}'. Only archived events can be unarchived.`,
+      );
+    }
+
+    return this.eventsRepository.update(eventId, {
+      status: EventStatus.finished,
+      archivedAt: null,
+    });
+  }
+
+  /**
    * Check if the event has started based on the canonical start timestamp
    */
   hasEventStarted(event: Event): boolean {

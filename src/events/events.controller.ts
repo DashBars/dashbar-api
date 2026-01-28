@@ -75,4 +75,10 @@ export class EventsController {
   archiveEvent(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.eventsService.archiveEvent(id, user.id);
   }
+
+  @Post(':id/unarchive')
+  @Roles(UserRole.manager, UserRole.admin)
+  unarchiveEvent(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
+    return this.eventsService.unarchiveEvent(id, user.id);
+  }
 }

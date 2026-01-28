@@ -119,29 +119,39 @@ export class BarsService {
           },
         });
 
+        let createdGlobalInv = false;
         if (!globalInv) {
           globalInv = await tx.globalInventory.create({
             data: {
               ownerId: userId,
               drinkId: stock.drinkId,
               supplierId: stock.supplierId || null,
-              totalQuantity: 0,
+              // Defensive path: if legacy bar stock exists without a global record,
+              // create it so we don't lose track of physical stock.
+              totalQuantity: stock.quantity,
               allocatedQuantity: 0,
               unitCost: stock.unitCost,
               currency: stock.currency,
               ownershipMode: stock.ownershipMode,
             },
           });
+          createdGlobalInv = true;
         }
 
-        // Increment global quantity and decrement allocated
-        await tx.globalInventory.update({
-          where: { id: globalInv.id },
-          data: {
-            totalQuantity: { increment: stock.quantity },
-            allocatedQuantity: { decrement: stock.quantity },
-          },
-        });
+        // IMPORTANT: do NOT increment totalQuantity here.
+        // totalQuantity represents the physical stock owned in global inventory.
+        // Deleting a bar returns allocated stock back to available by decrementing allocatedQuantity.
+        if (!createdGlobalInv) {
+          if (globalInv.allocatedQuantity < stock.quantity) {
+            throw new BadRequestException(
+              `Cannot return ${stock.quantity} units to global. allocatedQuantity is ${globalInv.allocatedQuantity}.`,
+            );
+          }
+          await tx.globalInventory.update({
+            where: { id: globalInv.id },
+            data: { allocatedQuantity: { decrement: stock.quantity } },
+          });
+        }
 
         // Create inventory movement
         await tx.inventoryMovement.create({

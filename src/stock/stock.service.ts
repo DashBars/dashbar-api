@@ -562,29 +562,44 @@ export class StockService {
         },
       });
 
+      let createdGlobalInv = false;
       if (!globalInv) {
-        globalInv = await tx.globalInventory.create({
+        // Under the new rules, bar stock should always come from global inventory.
+        // Still, keep this defensive path to avoid losing stock if legacy data exists.
+        const created = await tx.globalInventory.create({
           data: {
             ownerId: userId,
             drinkId: dto.drinkId,
             supplierId: supplierIdForGlobal,
-            totalQuantity: 0,
+            // These units were not previously counted in global inventory.
+            totalQuantity: dto.quantity,
             allocatedQuantity: 0,
             unitCost: stockToReturn.unitCost,
             currency: stockToReturn.currency,
             ownershipMode: stockToReturn.ownershipMode,
           },
         });
+        globalInv = created;
+        createdGlobalInv = true;
       }
 
       // Update global inventory
-      const updatedGlobalInv = await tx.globalInventory.update({
-        where: { id: globalInv.id },
-        data: {
-          totalQuantity: { increment: dto.quantity },
-          allocatedQuantity: { decrement: dto.quantity },
-        },
-      });
+      // IMPORTANT: do NOT increment totalQuantity here.
+      // totalQuantity already represents the physical stock owned in global inventory.
+      // Assigning to bars increments allocatedQuantity; returning should only decrement allocatedQuantity.
+      const updatedGlobalInv = createdGlobalInv
+        ? globalInv
+        : await (async () => {
+            if (globalInv.allocatedQuantity < dto.quantity) {
+              throw new BadRequestException(
+                `Cannot return ${dto.quantity} units. Global inventory allocatedQuantity is ${globalInv.allocatedQuantity}.`,
+              );
+            }
+            return tx.globalInventory.update({
+              where: { id: globalInv.id },
+              data: { allocatedQuantity: { decrement: dto.quantity } },
+            });
+          })();
 
       // Create inventory movement
       const movement = await tx.inventoryMovement.create({
