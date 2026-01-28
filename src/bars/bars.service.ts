@@ -183,6 +183,11 @@ export class BarsService {
         where: { barId },
       });
 
+      // Delete inventory movements associated with this bar
+      await tx.inventoryMovement.deleteMany({
+        where: { barId },
+      });
+
       // Delete the bar
       await tx.bar.delete({
         where: { id: barId },

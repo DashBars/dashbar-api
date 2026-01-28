@@ -178,6 +178,19 @@ export class SalesRepository {
   }
 
   /**
+   * Get inventory movements by global inventory entry
+   */
+  async getInventoryMovementsByGlobalInventory(
+    globalInventoryId: number,
+  ): Promise<InventoryMovement[]> {
+    return this.prisma.inventoryMovement.findMany({
+      where: { globalInventoryId },
+      include: { drink: true, supplier: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
    * Get inventory movements by sale
    */
   async getInventoryMovementsBySale(saleId: number): Promise<InventoryMovement[]> {

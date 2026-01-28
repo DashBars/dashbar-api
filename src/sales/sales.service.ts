@@ -3,7 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SalesRepository } from './sales.repository';
 import { BarsService } from '../bars/bars.service';
 import { CreateSaleDto } from './dto';
-import { InsufficientStockException } from '../common/exceptions';
+import { InsufficientStockException, NotOwnerException } from '../common/exceptions';
 import { Sale, InventoryMovement, Stock, StockDepletionPolicy } from '@prisma/client';
 
 interface RecipeComponent {
@@ -231,6 +231,26 @@ export class SalesService {
   ): Promise<InventoryMovement[]> {
     await this.barsService.findOne(eventId, barId, userId);
     return this.salesRepository.getInventoryMovementsByBar(barId);
+  }
+
+  /**
+   * Get inventory movements for a global inventory item
+   */
+  async getGlobalInventoryMovements(
+    globalInventoryId: number,
+    userId: number,
+  ): Promise<InventoryMovement[]> {
+    // Ensure the global inventory entry belongs to this user (tenant safety)
+    const inv = await (this as any).salesRepository['prisma'].globalInventory.findUnique({
+      where: { id: globalInventoryId },
+      select: { ownerId: true },
+    });
+
+    if (!inv || inv.ownerId !== userId) {
+      throw new NotOwnerException();
+    }
+
+    return this.salesRepository.getInventoryMovementsByGlobalInventory(globalInventoryId);
   }
 
   /**

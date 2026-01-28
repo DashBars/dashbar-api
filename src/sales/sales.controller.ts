@@ -82,3 +82,19 @@ export class InventoryMovementsController {
     return this.salesService.getInventoryMovements(eventId, barId, user.id);
   }
 }
+
+@Controller('global-inventory/:globalInventoryId/movements')
+export class GlobalInventoryMovementsController {
+  constructor(private readonly salesService: SalesService) {}
+
+  /**
+   * Get inventory movements for a global inventory item
+   */
+  @Get()
+  findAll(
+    @Param('globalInventoryId', ParseIntPipe) globalInventoryId: number,
+    @CurrentUser() user: User,
+  ) {
+    return this.salesService.getGlobalInventoryMovements(globalInventoryId, user.id);
+  }
+}
