@@ -454,6 +454,19 @@ export class StockService {
         include: { drink: true, supplier: true },
       });
 
+      // If source stock reaches zero, delete the row to avoid clutter
+      if (fromStock.quantity === 0) {
+        await tx.stock.delete({
+          where: {
+            barId_drinkId_supplierId: {
+              barId: dto.fromBarId,
+              drinkId: dto.drinkId,
+              supplierId: stockToMove.supplierId,
+            },
+          },
+        });
+      }
+
       // Increase destination stock
       const toStock = await tx.stock.upsert({
         where: {
@@ -539,7 +552,7 @@ export class StockService {
 
     return this.prisma.$transaction(async (tx) => {
       // Decrease bar stock
-      await tx.stock.update({
+      const updatedStock = await tx.stock.update({
         where: {
           barId_drinkId_supplierId: {
             barId: dto.barId,
@@ -551,6 +564,19 @@ export class StockService {
           quantity: { decrement: dto.quantity },
         },
       });
+
+      // If bar stock reaches zero, delete the row so it no longer appears in the UI
+      if (updatedStock.quantity === 0) {
+        await tx.stock.delete({
+          where: {
+            barId_drinkId_supplierId: {
+              barId: dto.barId,
+              drinkId: dto.drinkId,
+              supplierId: stockToReturn.supplierId,
+            },
+          },
+        });
+      }
 
       // Find or create global inventory entry
       const supplierIdForGlobal = stockToReturn.supplierId || null;
