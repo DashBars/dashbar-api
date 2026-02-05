@@ -194,7 +194,8 @@ model Event {
 
   bars                 Bar[]
   eventRecipes         EventRecipe[]
-  eventPrices          EventPrice[]
+  eventPrices          EventPrice[] // DEPRECATED: Use eventProducts instead
+  eventProducts        EventProduct[]
   categories           Category[]
   thresholds           StockThreshold[]
   alerts               StockAlert[]
@@ -214,7 +215,6 @@ model EventRecipe {
   cocktailName String @map("cocktail_name") // Nombre del trago a vender
   glassVolume  Int     @map("glass_volume") // Volumen del vaso en ml
   hasIce       Boolean @default(false) @map("has_ice") // Indica si lleva hielo
-  salePrice    Int     @map("sale_price") // Precio de venta en centavos
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
@@ -250,17 +250,51 @@ model EventRecipeComponent {
   @@map("event_recipe_component")
 }
 
-// Prices shared across the entire event (no bar or bar-type differentiation)
+// Products: custom named items that can contain one or multiple cocktails (combos)
+// Replaces EventPrice with more flexibility for naming and bundling
+model EventProduct {
+  id       Int     @id @default(autoincrement())
+  eventId  Int     @map("event_id")
+  barId    Int?    @map("bar_id") // null = producto del evento; set = override por barra
+  name     String  // Custom name for the product (e.g., "Combo Coca + Sprite")
+  price    Int     // Price in cents
+  isCombo  Boolean @default(false) @map("is_combo") // true if contains multiple cocktails
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bar   Bar?  @relation(fields: [barId], references: [id], onDelete: Cascade)
+
+  cocktails EventProductCocktail[] // Multiple cocktails for combos
+
+  @@unique([eventId, name, barId])
+  @@map("event_product")
+}
+
+// Join table for EventProduct and Cocktail (many-to-many)
+model EventProductCocktail {
+  eventProductId Int @map("event_product_id")
+  cocktailId     Int @map("cocktail_id")
+
+  eventProduct EventProduct @relation(fields: [eventProductId], references: [id], onDelete: Cascade)
+  cocktail     Cocktail     @relation(fields: [cocktailId], references: [id])
+
+  @@id([eventProductId, cocktailId])
+  @@map("event_product_cocktail")
+}
+
+// Prices: event-level default (barId null) or per-bar override (barId set)
+// DEPRECATED: Use EventProduct instead for better flexibility
 model EventPrice {
-  id         Int @id @default(autoincrement())
-  eventId    Int @map("event_id")
-  cocktailId Int @map("cocktail_id")
-  price      Int // in cents
+  id         Int  @id @default(autoincrement())
+  eventId    Int  @map("event_id")
+  cocktailId Int  @map("cocktail_id")
+  barId      Int? @map("bar_id") // null = precio por defecto del evento; set = override por barra
+  price      Int  // in cents
 
   event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
   cocktail Cocktail @relation(fields: [cocktailId], references: [id])
+  bar      Bar?     @relation(fields: [barId], references: [id], onDelete: Cascade)
 
-  @@unique([eventId, cocktailId])
+  @@unique([eventId, cocktailId, barId])
   @@map("event_price")
 }
 
@@ -275,6 +309,8 @@ model Bar {
 
   stocks               Stock[]
   posnets              Posnet[]
+  eventPrices          EventPrice[] // Precios específicos de esta barra (override) - DEPRECATED
+  eventProducts        EventProduct[] // Productos específicos de esta barra (override)
   recipeOverrides      BarRecipeOverride[]
   sales                Sale[]
   inventoryMovements   InventoryMovement[]
@@ -362,7 +398,8 @@ model Cocktail {
 
   products        Product[]
   recipeItems     Recipe[]
-  eventPrices     EventPrice[]
+  eventPrices     EventPrice[] // DEPRECATED
+  eventProductCocktails EventProductCocktail[]
   recipeOverrides BarRecipeOverride[]
   sales           Sale[]
   categories      CocktailCategory[]

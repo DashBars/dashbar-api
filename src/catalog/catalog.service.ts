@@ -33,23 +33,18 @@ export class CatalogService {
   constructor(private readonly catalogRepository: CatalogRepository) {}
 
   /**
-   * Get full catalog for POS
+   * Get full catalog for POS. Optional barId: resolves prices per bar (bar override > event default > base).
    */
-  async getCatalog(eventId: number): Promise<CatalogResponse> {
-    // Verify event exists
+  async getCatalog(eventId: number, barId?: number): Promise<CatalogResponse> {
     const event = await this.catalogRepository.getEventById(eventId);
     if (!event) {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
-    // Get categories with cocktails
     const categories = await this.catalogRepository.getCategoriesWithCocktails(eventId);
+    const eventPrices = await this.catalogRepository.getEventPrices(eventId, barId);
+    const priceMap = this.buildPriceMap(eventPrices, barId);
 
-    // Get event prices
-    const eventPrices = await this.catalogRepository.getEventPrices(eventId);
-    const priceMap = new Map(eventPrices.map((p) => [p.cocktailId, p.price]));
-
-    // Get uncategorized cocktails
     const uncategorizedCocktails = await this.catalogRepository.getUncategorizedCocktails(eventId);
 
     // Transform categories
@@ -74,6 +69,29 @@ export class CatalogService {
       categories: catalogCategories,
       uncategorized,
     };
+  }
+
+  /**
+   * Build cocktailId -> price map: bar override wins, then event-level, then base price not used here (handled in transform).
+   */
+  private buildPriceMap(
+    eventPrices: Array<{ cocktailId: number; barId: number | null; price: number }>,
+    barId?: number,
+  ): Map<number, number> {
+    const map = new Map<number, number>();
+    const barOverrides = barId != null
+      ? eventPrices.filter((p) => p.barId === barId)
+      : [];
+    const eventLevel = eventPrices.filter((p) => p.barId == null);
+    for (const p of barOverrides) {
+      map.set(p.cocktailId, p.price);
+    }
+    for (const p of eventLevel) {
+      if (!map.has(p.cocktailId)) {
+        map.set(p.cocktailId, p.price);
+      }
+    }
+    return map;
   }
 
   /**

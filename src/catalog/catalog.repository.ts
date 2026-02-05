@@ -27,11 +27,17 @@ export class CatalogRepository {
   }
 
   /**
-   * Get all event prices for cocktails
+   * Get prices for catalog: event-level (barId null) and optionally bar overrides (barId set).
+   * When barId is provided, returns both so service can merge (bar override wins).
    */
-  async getEventPrices(eventId: number) {
+  async getEventPrices(eventId: number, barId?: number) {
+    if (barId == null) {
+      return this.prisma.eventPrice.findMany({
+        where: { eventId, barId: null },
+      });
+    }
     return this.prisma.eventPrice.findMany({
-      where: { eventId },
+      where: { eventId, OR: [{ barId: null }, { barId }] },
     });
   }
 

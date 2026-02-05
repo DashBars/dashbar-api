@@ -26,6 +26,7 @@ import { VenuesModule } from './venues/venues.module';
 import { ManagerInventoryModule } from './manager-inventory/manager-inventory.module';
 import { GlobalInventoryModule } from './global-inventory/global-inventory.module';
 import { ReturnPolicyModule } from './return-policy/return-policy.module';
+import { ProductsModule } from './products/products.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 
@@ -59,6 +60,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ManagerInventoryModule,
     GlobalInventoryModule,
     ReturnPolicyModule,
+    ProductsModule,
   ],
   providers: [
     {

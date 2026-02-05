@@ -252,8 +252,10 @@ export class DashboardRepository {
 
     if (!cocktail) return null;
 
-    const eventPrice = await this.prisma.eventPrice.findUnique({
-      where: { eventId_cocktailId: { eventId, cocktailId } },
+    // Use findFirst for event-level prices (barId = null)
+    // The actual unique constraint is on (eventId, cocktailId, barId)
+    const eventPrice = await this.prisma.eventPrice.findFirst({
+      where: { eventId, cocktailId, barId: null },
     });
 
     return {

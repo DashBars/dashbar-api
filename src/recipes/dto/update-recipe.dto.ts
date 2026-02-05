@@ -17,11 +17,6 @@ export class UpdateRecipeDto {
   @IsOptional()
   hasIce?: boolean;
 
-  @IsInt()
-  @Min(0)
-  @IsOptional()
-  salePrice?: number;
-
   @IsArray()
   @ArrayMinSize(1)
   @IsEnum(BarType, { each: true })

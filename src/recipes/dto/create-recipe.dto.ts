@@ -14,10 +14,6 @@ export class CreateRecipeDto {
   @IsBoolean()
   hasIce: boolean;
 
-  @IsInt()
-  @Min(0)
-  salePrice: number; // precio de venta en centavos
-
   @IsArray()
   @ArrayMinSize(1)
   @IsEnum(BarType, { each: true })

@@ -137,7 +137,6 @@ async function main() {
   const venue1 = await prisma.venue.create({
     data: {
       name: 'Estadio River Plate',
-      description: 'El Monumental - Estadio de River Plate',
       address: 'Av. Figueroa Alcorta 7597',
       city: 'Buenos Aires',
       country: 'Argentina',
@@ -148,7 +147,6 @@ async function main() {
   const venue2 = await prisma.venue.create({
     data: {
       name: 'Luna Park',
-      description: 'Estadio cubierto Luna Park',
       address: 'Av. Madero 420',
       city: 'Buenos Aires',
       country: 'Argentina',
@@ -697,89 +695,210 @@ async function main() {
 
   console.log(`   ✅ Created stock entries for all bars`);
 
-  // ============= EVENT RECIPES (per bar type) =============
-  console.log('📝 Creating event recipes (per bar type)...');
+  // ============= EVENT RECIPES (new structure) =============
+  console.log('📝 Creating event recipes...');
 
-  // Recetas VIP (más premium)
-  await prisma.eventRecipe.createMany({
-    data: [
-      // Screwdriver VIP (40% vodka, 60% jugo naranja)
-      { eventId: futureEvent.id, barType: BarType.VIP, cocktailId: screwdriver.id, drinkId: vodka.id, cocktailPercentage: 40 },
-      { eventId: futureEvent.id, barType: BarType.VIP, cocktailId: screwdriver.id, drinkId: jugoNaranja.id, cocktailPercentage: 60 },
-      // Gin Tonic VIP (35% gin, 65% tonica)
-      { eventId: futureEvent.id, barType: BarType.VIP, cocktailId: ginTonic.id, drinkId: gin.id, cocktailPercentage: 35 },
-      { eventId: futureEvent.id, barType: BarType.VIP, cocktailId: ginTonic.id, drinkId: tonicWater.id, cocktailPercentage: 65 },
-      // Whisky VIP (100% whisky)
-      { eventId: futureEvent.id, barType: BarType.VIP, cocktailId: whiskyOnTheRocks.id, drinkId: whisky.id, cocktailPercentage: 100 },
-    ],
+  // Future Event Recipes
+  const screwdriverRecipe = await prisma.eventRecipe.create({
+    data: {
+      eventId: futureEvent.id,
+      cocktailName: 'Screwdriver',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.VIP },
+          { barType: BarType.general },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: vodka.id, percentage: 35 },
+          { drinkId: jugoNaranja.id, percentage: 65 },
+        ],
+      },
+    },
   });
 
-  // Recetas General (menos premium, más diluido)
-  await prisma.eventRecipe.createMany({
-    data: [
-      // Screwdriver General (30% vodka, 70% jugo naranja) - menos alcohol
-      { eventId: futureEvent.id, barType: BarType.general, cocktailId: screwdriver.id, drinkId: vodka.id, cocktailPercentage: 30 },
-      { eventId: futureEvent.id, barType: BarType.general, cocktailId: screwdriver.id, drinkId: jugoNaranja.id, cocktailPercentage: 70 },
-      // Cuba Libre General
-      { eventId: futureEvent.id, barType: BarType.general, cocktailId: cubaLibre.id, drinkId: ron.id, cocktailPercentage: 30 },
-      { eventId: futureEvent.id, barType: BarType.general, cocktailId: cubaLibre.id, drinkId: cola.id, cocktailPercentage: 70 },
-    ],
+  const ginTonicRecipe = await prisma.eventRecipe.create({
+    data: {
+      eventId: futureEvent.id,
+      cocktailName: 'Gin Tonic',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [{ barType: BarType.VIP }],
+      },
+      components: {
+        create: [
+          { drinkId: gin.id, percentage: 35 },
+          { drinkId: tonicWater.id, percentage: 65 },
+        ],
+      },
+    },
   });
 
-  // Recetas Backstage (exclusivas)
-  await prisma.eventRecipe.createMany({
-    data: [
-      // Margarita Backstage
-      { eventId: futureEvent.id, barType: BarType.backstage, cocktailId: margarita.id, drinkId: tequila.id, cocktailPercentage: 50 },
-      { eventId: futureEvent.id, barType: BarType.backstage, cocktailId: margarita.id, drinkId: jugoLimon.id, cocktailPercentage: 50 },
-      // Whisky Backstage
-      { eventId: futureEvent.id, barType: BarType.backstage, cocktailId: whiskyOnTheRocks.id, drinkId: whisky.id, cocktailPercentage: 100 },
-    ],
+  const cubaLibreRecipe = await prisma.eventRecipe.create({
+    data: {
+      eventId: futureEvent.id,
+      cocktailName: 'Cuba Libre',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [{ barType: BarType.general }],
+      },
+      components: {
+        create: [
+          { drinkId: ron.id, percentage: 30 },
+          { drinkId: cola.id, percentage: 70 },
+        ],
+      },
+    },
   });
 
-  // Recetas para evento ongoing - General bars
-  await prisma.eventRecipe.createMany({
-    data: [
-      // Cuba Libre
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: cubaLibre.id, drinkId: ron.id, cocktailPercentage: 30 },
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: cubaLibre.id, drinkId: cola.id, cocktailPercentage: 70 },
-      // Screwdriver
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: screwdriver.id, drinkId: vodka.id, cocktailPercentage: 30 },
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: screwdriver.id, drinkId: jugoNaranja.id, cocktailPercentage: 70 },
-      // Gin Tonic
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: ginTonic.id, drinkId: gin.id, cocktailPercentage: 30 },
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: ginTonic.id, drinkId: tonicWater.id, cocktailPercentage: 70 },
-      // Vodka Tonic
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: vodkaTonic.id, drinkId: vodka.id, cocktailPercentage: 30 },
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: vodkaTonic.id, drinkId: tonicWater.id, cocktailPercentage: 70 },
-      // Ron Cola
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: ronCola.id, drinkId: ron.id, cocktailPercentage: 30 },
-      { eventId: ongoingEvent.id, barType: BarType.general, cocktailId: ronCola.id, drinkId: cola.id, cocktailPercentage: 70 },
-    ],
+  const margaritaRecipe = await prisma.eventRecipe.create({
+    data: {
+      eventId: futureEvent.id,
+      cocktailName: 'Margarita',
+      glassVolume: 200,
+      hasIce: true,
+      barTypes: {
+        create: [{ barType: BarType.backstage }],
+      },
+      components: {
+        create: [
+          { drinkId: tequila.id, percentage: 50 },
+          { drinkId: jugoLimon.id, percentage: 50 },
+        ],
+      },
+    },
   });
 
-  // Recetas para evento ongoing - VIP bars (más alcohol)
-  await prisma.eventRecipe.createMany({
-    data: [
-      // Cuba Libre VIP
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: cubaLibre.id, drinkId: ron.id, cocktailPercentage: 40 },
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: cubaLibre.id, drinkId: cola.id, cocktailPercentage: 60 },
-      // Screwdriver VIP
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: screwdriver.id, drinkId: vodka.id, cocktailPercentage: 40 },
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: screwdriver.id, drinkId: jugoNaranja.id, cocktailPercentage: 60 },
-      // Gin Tonic VIP
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: ginTonic.id, drinkId: gin.id, cocktailPercentage: 35 },
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: ginTonic.id, drinkId: tonicWater.id, cocktailPercentage: 65 },
-      // Vodka Tonic VIP
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: vodkaTonic.id, drinkId: vodka.id, cocktailPercentage: 35 },
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: vodkaTonic.id, drinkId: tonicWater.id, cocktailPercentage: 65 },
-      // Ron Cola VIP
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: ronCola.id, drinkId: ron.id, cocktailPercentage: 40 },
-      { eventId: ongoingEvent.id, barType: BarType.VIP, cocktailId: ronCola.id, drinkId: cola.id, cocktailPercentage: 60 },
-    ],
+  const whiskyRecipe = await prisma.eventRecipe.create({
+    data: {
+      eventId: futureEvent.id,
+      cocktailName: 'Whisky on the Rocks',
+      glassVolume: 150,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.VIP },
+          { barType: BarType.backstage },
+        ],
+      },
+      components: {
+        create: [{ drinkId: whisky.id, percentage: 100 }],
+      },
+    },
   });
 
-  console.log(`   ✅ Created recipes for VIP, General, and Backstage bar types`);
+  // Ongoing Event Recipes
+  const ongoingCubaLibre = await prisma.eventRecipe.create({
+    data: {
+      eventId: ongoingEvent.id,
+      cocktailName: 'Cuba Libre',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.general },
+          { barType: BarType.VIP },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: ron.id, percentage: 35 },
+          { drinkId: cola.id, percentage: 65 },
+        ],
+      },
+    },
+  });
+
+  const ongoingScrewdriver = await prisma.eventRecipe.create({
+    data: {
+      eventId: ongoingEvent.id,
+      cocktailName: 'Screwdriver',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.general },
+          { barType: BarType.VIP },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: vodka.id, percentage: 35 },
+          { drinkId: jugoNaranja.id, percentage: 65 },
+        ],
+      },
+    },
+  });
+
+  const ongoingGinTonic = await prisma.eventRecipe.create({
+    data: {
+      eventId: ongoingEvent.id,
+      cocktailName: 'Gin Tonic',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.general },
+          { barType: BarType.VIP },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: gin.id, percentage: 35 },
+          { drinkId: tonicWater.id, percentage: 65 },
+        ],
+      },
+    },
+  });
+
+  const ongoingVodkaTonic = await prisma.eventRecipe.create({
+    data: {
+      eventId: ongoingEvent.id,
+      cocktailName: 'Vodka Tonic',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.general },
+          { barType: BarType.VIP },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: vodka.id, percentage: 35 },
+          { drinkId: tonicWater.id, percentage: 65 },
+        ],
+      },
+    },
+  });
+
+  const ongoingRonCola = await prisma.eventRecipe.create({
+    data: {
+      eventId: ongoingEvent.id,
+      cocktailName: 'Ron Cola',
+      glassVolume: 250,
+      hasIce: true,
+      barTypes: {
+        create: [
+          { barType: BarType.general },
+          { barType: BarType.VIP },
+        ],
+      },
+      components: {
+        create: [
+          { drinkId: ron.id, percentage: 35 },
+          { drinkId: cola.id, percentage: 65 },
+        ],
+      },
+    },
+  });
+
+  console.log(`   ✅ Created event recipes with bar types and components`);
 
   // ============= EVENT PRICES (shared across event) =============
   console.log('💰 Creating event prices (shared across all bars)...');

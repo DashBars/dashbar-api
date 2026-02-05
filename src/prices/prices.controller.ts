@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import { PricesService } from './prices.service';
 import { CreatePriceDto, UpdatePriceDto } from './dto';
@@ -36,7 +37,14 @@ export class PricesController {
   }
 
   @Get()
-  findAll(@Param('eventId', ParseIntPipe) eventId: number) {
+  findAll(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query('barId') barId?: string,
+  ) {
+    const barIdNum = barId ? parseInt(barId, 10) : undefined;
+    if (barIdNum != null && !Number.isNaN(barIdNum)) {
+      return this.pricesService.findAllByEventAndBar(eventId, barIdNum);
+    }
     return this.pricesService.findAllByEvent(eventId);
   }
 

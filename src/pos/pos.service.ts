@@ -15,10 +15,10 @@ export class POSService {
   ) {}
 
   /**
-   * Get catalog for POS (proxy to CatalogService)
+   * Get catalog for POS (proxy to CatalogService). Optional barId resolves prices per bar.
    */
-  async getCatalog(eventId: number): Promise<CatalogResponse> {
-    return this.catalogService.getCatalog(eventId);
+  async getCatalog(eventId: number, barId?: number): Promise<CatalogResponse> {
+    return this.catalogService.getCatalog(eventId, barId);
   }
 
   /**
@@ -29,8 +29,8 @@ export class POSService {
     // 1. Validate bar belongs to event
     const bar = await this.barsService.findOne(eventId, dto.barId, userId);
 
-    // 2. Get catalog with resolved prices
-    const catalog = await this.catalogService.getCatalog(eventId);
+    // 2. Get catalog with prices resolved for this bar (bar override > event default > base)
+    const catalog = await this.catalogService.getCatalog(eventId, dto.barId);
 
     // 3. Build price map from catalog
     const priceMap = this.buildPriceMap(catalog);

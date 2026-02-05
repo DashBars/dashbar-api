@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PricesRepository } from './prices.repository';
 import { EventsService } from '../events/events.service';
+import { BarsService } from '../bars/bars.service';
 import { CreatePriceDto, UpdatePriceDto } from './dto';
-import { EventStartedException, NotOwnerException } from '../common/exceptions';
+import { NotOwnerException } from '../common/exceptions';
 import { EventPrice } from '@prisma/client';
 
 @Injectable()
@@ -10,36 +11,35 @@ export class PricesService {
   constructor(
     private readonly pricesRepository: PricesRepository,
     private readonly eventsService: EventsService,
+    private readonly barsService: BarsService,
   ) {}
 
   /**
-   * Validate that prices can be modified (event not started)
+   * Validate that the user owns the event (prices can be modified even when event is active)
    */
   private async validateCanModify(eventId: number, userId: number): Promise<void> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-    
     if (!this.eventsService.isOwner(event, userId)) {
       throw new NotOwnerException();
-    }
-
-    if (this.eventsService.hasEventStarted(event)) {
-      throw new EventStartedException('modify prices');
     }
   }
 
   /**
-   * Create or update a price for a cocktail within an event
+   * Create or update a price for a cocktail within an event (event-level or per-bar override)
    */
   async upsert(eventId: number, userId: number, dto: CreatePriceDto): Promise<EventPrice> {
     await this.validateCanModify(eventId, userId);
 
-    // Verify cocktail exists
+    if (dto.barId != null) {
+      await this.barsService.findOne(eventId, dto.barId, userId);
+    }
+
     const cocktail = await this.pricesRepository.findCocktailById(dto.cocktailId);
     if (!cocktail) {
       throw new NotFoundException(`Cocktail with ID ${dto.cocktailId} not found`);
     }
 
-    return this.pricesRepository.upsert(eventId, dto.cocktailId, dto.price);
+    return this.pricesRepository.upsert(eventId, dto.cocktailId, dto.price, dto.barId);
   }
 
   /**
@@ -51,10 +51,22 @@ export class PricesService {
   }
 
   /**
-   * Get price for a specific cocktail in an event
+   * Get price for a specific cocktail in an event (event-level or per-bar)
    */
-  async findByCocktail(eventId: number, cocktailId: number): Promise<EventPrice | null> {
-    return this.pricesRepository.findByEventIdAndCocktailId(eventId, cocktailId);
+  async findByCocktail(
+    eventId: number,
+    cocktailId: number,
+    barId?: number | null,
+  ): Promise<EventPrice | null> {
+    return this.pricesRepository.findByEventIdAndCocktailId(eventId, cocktailId, barId);
+  }
+
+  /**
+   * Get all price overrides for a bar
+   */
+  async findAllByEventAndBar(eventId: number, barId: number): Promise<EventPrice[]> {
+    await this.eventsService.findById(eventId);
+    return this.pricesRepository.findByEventIdAndBarId(eventId, barId);
   }
 
   /**
@@ -108,7 +120,19 @@ export class PricesService {
     const results: EventPrice[] = [];
 
     for (const priceDto of prices) {
-      const price = await this.pricesRepository.upsert(eventId, priceDto.cocktailId, priceDto.price);
+      if (priceDto.barId != null) {
+        await this.barsService.findOne(eventId, priceDto.barId, userId);
+      }
+      const cocktail = await this.pricesRepository.findCocktailById(priceDto.cocktailId);
+      if (!cocktail) {
+        throw new NotFoundException(`Cocktail with ID ${priceDto.cocktailId} not found`);
+      }
+      const price = await this.pricesRepository.upsert(
+        eventId,
+        priceDto.cocktailId,
+        priceDto.price,
+        priceDto.barId,
+      );
       results.push(price);
     }
 

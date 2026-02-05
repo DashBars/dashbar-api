@@ -25,11 +25,32 @@ export class RecipesRepository {
     cocktailName: string;
     glassVolume: number;
     hasIce: boolean;
-    salePrice: number;
     barTypes: BarType[];
     components: Array<{ drinkId: number; percentage: number }>;
   }): Promise<EventRecipeWithRelations> {
     return this.prisma.$transaction(async (tx) => {
+      // Create or find cocktail in catalog
+      let cocktail = await tx.cocktail.findFirst({
+        where: {
+          name: {
+            equals: data.cocktailName,
+            mode: 'insensitive', // Case-insensitive search
+          },
+        },
+      });
+
+      if (!cocktail) {
+        // Create new cocktail in catalog with default price
+        cocktail = await tx.cocktail.create({
+          data: {
+            name: data.cocktailName,
+            price: 0, // Default price, should be set via EventPrice
+            volume: data.glassVolume,
+            isActive: true,
+          },
+        });
+      }
+
       // Create main recipe
       const recipe = await tx.eventRecipe.create({
         data: {
@@ -37,7 +58,6 @@ export class RecipesRepository {
           cocktailName: data.cocktailName,
           glassVolume: data.glassVolume,
           hasIce: data.hasIce,
-          salePrice: data.salePrice,
         },
       });
 
@@ -273,7 +293,6 @@ export class RecipesRepository {
         cocktailName?: string;
         glassVolume?: number;
         hasIce?: boolean;
-        salePrice?: number;
         barTypes?: BarType[];
         components?: Array<{ drinkId: number; percentage: number }>;
     },
@@ -284,7 +303,6 @@ export class RecipesRepository {
       if (data.cocktailName !== undefined) updateData.cocktailName = data.cocktailName;
       if (data.glassVolume !== undefined) updateData.glassVolume = data.glassVolume;
       if (data.hasIce !== undefined) updateData.hasIce = data.hasIce;
-      if (data.salePrice !== undefined) updateData.salePrice = data.salePrice;
 
       if (Object.keys(updateData).length > 0) {
         await tx.eventRecipe.update({

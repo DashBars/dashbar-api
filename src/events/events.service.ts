@@ -176,17 +176,6 @@ export class EventsService {
       throw new BadRequestException('Only upcoming events can be activated');
     }
 
-    // Validate scheduledStartAt is not in the future
-    if (event.scheduledStartAt) {
-      const scheduledDate = new Date(event.scheduledStartAt);
-      const now = new Date();
-      if (scheduledDate > now) {
-        throw new BadRequestException(
-          'Cannot activate event before scheduled start time'
-        );
-      }
-    }
-
     return this.prisma.$transaction(async (tx) => {
       // Update event status and startedAt
       const updated = await tx.event.update({

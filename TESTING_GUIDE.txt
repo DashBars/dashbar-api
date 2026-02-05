@@ -1,0 +1,118 @@
+﻿# ========================================
+# GUÍA COMPLETA DE PRUEBAS - MÓDULO DE PRODUCTOS
+# ========================================
+
+Write-Host " Guía de Pruebas del Módulo de Productos" -ForegroundColor Cyan
+Write-Host ""
+
+# ----------------------------------------
+# 1. TESTS UNITARIOS
+# ----------------------------------------
+Write-Host " 1. Ejecutar Tests Unitarios:" -ForegroundColor Green
+Write-Host "   node node_modules/jest/bin/jest.js products --watchAll=false"
+Write-Host ""
+
+# ----------------------------------------
+# 2. INICIAR SERVIDOR
+# ----------------------------------------
+Write-Host " 2. Iniciar el Backend (en una terminal separada):" -ForegroundColor Green
+Write-Host "   cd f:\Projects\lele\dashbar\dashbar-api"
+Write-Host "   npm run start:dev"
+Write-Host ""
+
+# ----------------------------------------
+# 3. EJEMPLOS DE PRUEBA CON POWERSHELL
+# ----------------------------------------
+Write-Host " 3. Ejemplos de Pruebas con PowerShell:" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "   # Paso 1: Login y obtener token" -ForegroundColor Yellow
+Write-Host '    = @{'
+Write-Host '       email = "admin@example.com"'
+Write-Host '       password = "password123"'
+Write-Host '   } | ConvertTo-Json'
+Write-Host ''
+Write-Host '    = Invoke-RestMethod \'
+Write-Host '       -Uri "http://localhost:3000/auth/login" \'
+Write-Host '       -Method POST \'
+Write-Host '       -ContentType "application/json" \'
+Write-Host '       -Body '
+Write-Host ''
+Write-Host '    = .token'
+Write-Host '   Write-Host "Token obtenido: "'
+Write-Host ""
+
+Write-Host "   # Paso 2: Crear un producto simple" -ForegroundColor Yellow
+Write-Host '    = @{'
+Write-Host '       name = "Fernet Solo"'
+Write-Host '       price = 4000  # .00'
+Write-Host '       cocktailIds = @(1)'
+Write-Host '   } | ConvertTo-Json'
+Write-Host ''
+Write-Host '    = Invoke-RestMethod \'
+Write-Host '       -Uri "http://localhost:3000/events/1/products" \'
+Write-Host '       -Method POST \'
+Write-Host '       -Headers @{ Authorization = "Bearer " } \'
+Write-Host '       -ContentType "application/json" \'
+Write-Host '       -Body '
+Write-Host ''
+Write-Host '   Write-Host "Producto creado:" -ForegroundColor Green'
+Write-Host '    | ConvertTo-Json -Depth 5'
+Write-Host ""
+
+Write-Host "   # Paso 3: Crear un combo (múltiples cocktails)" -ForegroundColor Yellow
+Write-Host '    = @{'
+Write-Host '       name = "Combo Coca + Sprite"'
+Write-Host '       price = 5000  # .00'
+Write-Host '       cocktailIds = @(1, 2)'
+Write-Host '   } | ConvertTo-Json'
+Write-Host ''
+Write-Host '    = Invoke-RestMethod \'
+Write-Host '       -Uri "http://localhost:3000/events/1/products" \'
+Write-Host '       -Method POST \'
+Write-Host '       -Headers @{ Authorization = "Bearer " } \'
+Write-Host '       -ContentType "application/json" \'
+Write-Host '       -Body '
+Write-Host ''
+Write-Host '   Write-Host "Combo creado:" -ForegroundColor Green'
+Write-Host '   Write-Host "- Es combo: "'
+Write-Host '   Write-Host "- Cantidad de cocktails: 0"'
+Write-Host ""
+
+Write-Host "   # Paso 4: Listar todos los productos" -ForegroundColor Yellow
+Write-Host '    = Invoke-RestMethod \'
+Write-Host '       -Uri "http://localhost:3000/events/1/products" \'
+Write-Host '       -Method GET \'
+Write-Host '       -Headers @{ Authorization = "Bearer " }'
+Write-Host ''
+Write-Host '   Write-Host "Total de productos: 0"'
+Write-Host '    | Format-Table id, name, price, isCombo -AutoSize'
+Write-Host ""
+
+# ----------------------------------------
+# 4. FRONTEND
+# ----------------------------------------
+Write-Host "  4. Probar con el Frontend:" -ForegroundColor Green
+Write-Host "   cd f:\Projects\lele\dashbar\dashbar-ui"
+Write-Host "   npm run dev"
+Write-Host "   "
+Write-Host "   Luego abre: http://localhost:5173"
+Write-Host "   - Inicia sesión"
+Write-Host "   - Ve a un evento"
+Write-Host "   - Haz clic en la pestaña 'Productos'"
+Write-Host "   - Crea productos y combos"
+Write-Host ""
+
+# ----------------------------------------
+# 5. VERIFICAR BASE DE DATOS
+# ----------------------------------------
+Write-Host " 5. Verificar Base de Datos:" -ForegroundColor Green
+Write-Host "   cd f:\Projects\lele\dashbar\dashbar-api"
+Write-Host "   node node_modules/prisma/build/index.js studio"
+Write-Host "   "
+Write-Host "   Esto abrirá Prisma Studio donde puedes ver:"
+Write-Host "   - Tabla: event_product"
+Write-Host "   - Tabla: event_product_cocktail"
+Write-Host ""
+
+Write-Host " Módulo de Productos listo para probar!" -ForegroundColor Cyan

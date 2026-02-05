@@ -88,7 +88,6 @@ export class RecipesService {
       cocktailName: normalizedName,
       glassVolume: dto.glassVolume,
       hasIce: dto.hasIce,
-      salePrice: dto.salePrice,
       barTypes: dto.barTypes,
       components: dto.components,
     });
@@ -221,7 +220,6 @@ export class RecipesService {
           cocktailName: recipe.cocktailName,
           glassVolume: recipe.glassVolume,
           hasIce: recipe.hasIce,
-          salePrice: recipe.salePrice,
           barTypes: [toBarType],
           components: recipe.components.map((c) => ({
             drinkId: c.drinkId,

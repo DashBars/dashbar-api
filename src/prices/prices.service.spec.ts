@@ -2,7 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PricesService } from './prices.service';
 import { PricesRepository } from './prices.repository';
 import { EventsService } from '../events/events.service';
-import { EventStartedException, NotOwnerException } from '../common/exceptions';
+import { BarsService } from '../bars/bars.service';
+import { NotOwnerException } from '../common/exceptions';
 
 describe('PricesService', () => {
   let service: PricesService;
@@ -40,8 +41,11 @@ describe('PricesService', () => {
     const mockEventsService = {
       findById: jest.fn(),
       findByIdWithOwner: jest.fn(),
-      hasEventStarted: jest.fn(),
       isOwner: jest.fn(),
+    };
+
+    const mockBarsService = {
+      findOne: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -49,6 +53,7 @@ describe('PricesService', () => {
         PricesService,
         { provide: PricesRepository, useValue: mockPricesRepository },
         { provide: EventsService, useValue: mockEventsService },
+        { provide: BarsService, useValue: mockBarsService },
       ],
     }).compile();
 
@@ -63,7 +68,6 @@ describe('PricesService', () => {
 
       eventsService.findByIdWithOwner.mockResolvedValue(mockEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(false);
       pricesRepository.findCocktailById.mockResolvedValue({ id: 1 } as any);
       pricesRepository.upsert.mockResolvedValue({
         id: 1,
@@ -77,14 +81,22 @@ describe('PricesService', () => {
       expect(result.price).toBe(1000);
     });
 
-    it('should throw EventStartedException when event has started', async () => {
+    it('should create/update a price when event has started', async () => {
       const dto = { cocktailId: 1, price: 1000 };
 
       eventsService.findByIdWithOwner.mockResolvedValue(mockStartedEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(true);
+      pricesRepository.findCocktailById.mockResolvedValue({ id: 1 } as any);
+      pricesRepository.upsert.mockResolvedValue({
+        id: 1,
+        eventId: 1,
+        ...dto,
+      } as any);
 
-      await expect(service.upsert(1, 1, dto)).rejects.toThrow(EventStartedException);
+      const result = await service.upsert(1, 1, dto);
+
+      expect(result).toBeDefined();
+      expect(result.price).toBe(1000);
     });
 
     it('should throw NotOwnerException when user is not owner', async () => {
@@ -121,7 +133,6 @@ describe('PricesService', () => {
 
       eventsService.findByIdWithOwner.mockResolvedValue(mockEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(false);
       pricesRepository.findByEventIdAndPriceId.mockResolvedValue(existingPrice as any);
       pricesRepository.update.mockResolvedValue({
         ...existingPrice,
@@ -133,14 +144,21 @@ describe('PricesService', () => {
       expect(result.price).toBe(1200);
     });
 
-    it('should throw EventStartedException when updating after event starts', async () => {
+    it('should update a price when event has started', async () => {
       const dto = { price: 1200 };
+      const existingPrice = { id: 1, eventId: 1, cocktailId: 1, price: 1000 };
 
       eventsService.findByIdWithOwner.mockResolvedValue(mockStartedEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(true);
+      pricesRepository.findByEventIdAndPriceId.mockResolvedValue(existingPrice as any);
+      pricesRepository.update.mockResolvedValue({
+        ...existingPrice,
+        ...dto,
+      } as any);
 
-      await expect(service.update(1, 1, 1, dto)).rejects.toThrow(EventStartedException);
+      const result = await service.update(1, 1, 1, dto);
+
+      expect(result.price).toBe(1200);
     });
   });
 
@@ -150,19 +168,21 @@ describe('PricesService', () => {
 
       eventsService.findByIdWithOwner.mockResolvedValue(mockEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(false);
       pricesRepository.findByEventIdAndPriceId.mockResolvedValue(existingPrice as any);
       pricesRepository.delete.mockResolvedValue(undefined);
 
       await expect(service.delete(1, 1, 1)).resolves.not.toThrow();
     });
 
-    it('should throw EventStartedException when deleting after event starts', async () => {
+    it('should delete a price when event has started', async () => {
+      const existingPrice = { id: 1, eventId: 1, cocktailId: 1, price: 1000 };
+
       eventsService.findByIdWithOwner.mockResolvedValue(mockStartedEvent as any);
       eventsService.isOwner.mockReturnValue(true);
-      eventsService.hasEventStarted.mockReturnValue(true);
+      pricesRepository.findByEventIdAndPriceId.mockResolvedValue(existingPrice as any);
+      pricesRepository.delete.mockResolvedValue(undefined);
 
-      await expect(service.delete(1, 1, 1)).rejects.toThrow(EventStartedException);
+      await expect(service.delete(1, 1, 1)).resolves.not.toThrow();
     });
   });
 });
