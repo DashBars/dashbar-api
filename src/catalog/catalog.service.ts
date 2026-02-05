@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { CatalogRepository } from './catalog.repository';
+import { CatalogRepository, CatalogProduct } from './catalog.repository';
 import { Cocktail } from '@prisma/client';
 
 interface CatalogCocktail {
@@ -26,6 +26,8 @@ export interface CatalogResponse {
   eventName: string;
   categories: CatalogCategory[];
   uncategorized: CatalogCocktail[];
+  // New: products for POS (filtered by bar)
+  products?: CatalogProduct[];
 }
 
 @Injectable()
@@ -33,7 +35,9 @@ export class CatalogService {
   constructor(private readonly catalogRepository: CatalogRepository) {}
 
   /**
-   * Get full catalog for POS. Optional barId: resolves prices per bar (bar override > event default > base).
+   * Get full catalog for POS. When barId is provided, returns products filtered for that bar.
+   * Products come from EventProduct (created when recipes are marked as "producto final").
+   * If no EventProducts exist, falls back to cocktails filtered by recipe bar types.
    */
   async getCatalog(eventId: number, barId?: number): Promise<CatalogResponse> {
     const event = await this.catalogRepository.getEventById(eventId);
@@ -41,33 +45,69 @@ export class CatalogService {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
+    // Get products for the bar (or all event products if no barId)
+    const products = barId != null
+      ? await this.catalogRepository.getProductsForBar(eventId, barId)
+      : await this.catalogRepository.getAllEventProducts(eventId);
+
+    // Get bar type for filtering cocktails
+    let barType: string | null = null;
+    let allowedCocktailNames: Set<string> | null = null;
+    
+    if (barId != null) {
+      const bar = await this.catalogRepository.getBarById(barId);
+      if (bar) {
+        barType = bar.type;
+        // Get cocktail names that have recipes for this bar type
+        const names = await this.catalogRepository.getCocktailNamesForBarType(eventId, barType);
+        if (names.length > 0) {
+          allowedCocktailNames = new Set(names.map(n => n.toLowerCase()));
+        }
+      }
+    }
+
+    // Get categories for backwards compatibility
     const categories = await this.catalogRepository.getCategoriesWithCocktails(eventId);
     const eventPrices = await this.catalogRepository.getEventPrices(eventId, barId);
     const priceMap = this.buildPriceMap(eventPrices, barId);
 
     const uncategorizedCocktails = await this.catalogRepository.getUncategorizedCocktails(eventId);
 
-    // Transform categories
+    // Transform categories - filter cocktails by bar type if applicable
     const catalogCategories: CatalogCategory[] = categories.map((category) => ({
       id: category.id,
       name: category.name,
       description: category.description,
       sortIndex: category.sortIndex,
       cocktails: category.cocktails
-        .filter((cc) => (cc.cocktail as Cocktail).isActive)
+        .filter((cc) => {
+          const cocktail = cc.cocktail as Cocktail;
+          if (!cocktail.isActive) return false;
+          // If we have bar type filtering, only include cocktails with matching recipes
+          if (allowedCocktailNames !== null) {
+            return allowedCocktailNames.has(cocktail.name.toLowerCase());
+          }
+          return true;
+        })
         .map((cc) => this.transformCocktail(cc.cocktail as Cocktail, priceMap)),
     }));
 
-    // Transform uncategorized
-    const uncategorized: CatalogCocktail[] = uncategorizedCocktails.map((cocktail) =>
-      this.transformCocktail(cocktail, priceMap),
-    );
+    // Transform uncategorized - also filter by bar type if applicable
+    const uncategorized: CatalogCocktail[] = uncategorizedCocktails
+      .filter((cocktail) => {
+        if (allowedCocktailNames !== null) {
+          return allowedCocktailNames.has(cocktail.name.toLowerCase());
+        }
+        return true;
+      })
+      .map((cocktail) => this.transformCocktail(cocktail, priceMap));
 
     return {
       eventId: event.id,
       eventName: event.name,
       categories: catalogCategories,
       uncategorized,
+      products, // EventProducts filtered by bar
     };
   }
 

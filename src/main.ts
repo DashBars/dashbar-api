@@ -36,6 +36,7 @@ async function bootstrap() {
       'Accept',
       'Origin',
       'X-Requested-With',
+      'X-POS-Token',
       'Access-Control-Allow-Origin',
       'Access-Control-Allow-Headers',
       'Access-Control-Allow-Methods',

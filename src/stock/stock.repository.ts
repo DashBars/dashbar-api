@@ -34,10 +34,18 @@ export class StockRepository {
     barId: number,
     drinkId: number,
     supplierId: number,
+    sellAsWholeUnit?: boolean,
   ): Promise<Stock | null> {
+    // Si no se especifica sellAsWholeUnit, buscar el primero que coincida
+    if (sellAsWholeUnit === undefined) {
+      return this.prisma.stock.findFirst({
+        where: { barId, drinkId, supplierId },
+        include: { drink: true, supplier: true },
+      });
+    }
     return this.prisma.stock.findUnique({
       where: {
-        barId_drinkId_supplierId: { barId, drinkId, supplierId },
+        barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
       },
       include: { drink: true, supplier: true },
     });
@@ -65,11 +73,14 @@ export class StockRepository {
       unitCost: number;
       currency: string;
       ownershipMode: OwnershipMode;
+      sellAsWholeUnit?: boolean;
+      salePrice?: number | null;
     },
   ): Promise<Stock> {
+    const sellAsWholeUnit = data.sellAsWholeUnit ?? false;
     return this.prisma.stock.upsert({
       where: {
-        barId_drinkId_supplierId: { barId, drinkId, supplierId },
+        barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
       },
       create: {
         barId,
@@ -79,12 +90,15 @@ export class StockRepository {
         unitCost: data.unitCost,
         currency: data.currency,
         ownershipMode: data.ownershipMode,
+        sellAsWholeUnit,
+        salePrice: data.salePrice,
       },
       update: {
         quantity: data.quantity,
         unitCost: data.unitCost,
         currency: data.currency,
         ownershipMode: data.ownershipMode,
+        salePrice: data.salePrice,
       },
       include: { drink: true, supplier: true },
     });
@@ -95,20 +109,21 @@ export class StockRepository {
     drinkId: number,
     supplierId: number,
     newQuantity: number,
+    sellAsWholeUnit: boolean = false,
   ): Promise<Stock> {
     return this.prisma.stock.update({
       where: {
-        barId_drinkId_supplierId: { barId, drinkId, supplierId },
+        barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
       },
       data: { quantity: newQuantity },
       include: { drink: true, supplier: true },
     });
   }
 
-  async delete(barId: number, drinkId: number, supplierId: number): Promise<void> {
+  async delete(barId: number, drinkId: number, supplierId: number, sellAsWholeUnit: boolean = false): Promise<void> {
     await this.prisma.stock.delete({
       where: {
-        barId_drinkId_supplierId: { barId, drinkId, supplierId },
+        barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
       },
     });
   }

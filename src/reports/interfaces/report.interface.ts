@@ -4,6 +4,111 @@ export interface TopProductEntry {
   unitsSold: number;
   revenue: number;
   sharePercent: number;
+  profit?: number; // Revenue - COGS for this product
+}
+
+// ============= ENHANCED REPORTING INTERFACES =============
+
+/**
+ * Time bucket sizes for peak hours analysis
+ */
+export type BucketSize = 5 | 15 | 60;
+
+/**
+ * Peak hours entry with configurable bucket size
+ */
+export interface PeakHourBucketEntry {
+  startTime: string; // ISO timestamp
+  endTime: string; // ISO timestamp
+  salesCount: number;
+  revenue: number; // cents
+  topProduct?: string; // Name of top product in this bucket
+}
+
+/**
+ * Bar breakdown with all metrics
+ */
+export interface BarBreakdown {
+  barId: number;
+  barName: string;
+  barType: string;
+  // Totals
+  totalRevenue: number;
+  totalCOGS: number;
+  grossProfit: number;
+  marginPercent: number;
+  totalUnitsSold: number;
+  totalOrderCount: number;
+  avgTicketSize: number;
+  // Top products for this bar
+  topProducts: TopProductEntry[];
+  // Peak hours for this bar (60-min buckets)
+  peakHours: PeakHourEntry[];
+}
+
+/**
+ * POS terminal breakdown
+ */
+export interface PosBreakdown {
+  posnetId: number;
+  posnetCode: string;
+  posnetName: string;
+  barId: number;
+  barName: string;
+  // Totals
+  totalRevenue: number;
+  totalTransactions: number;
+  totalUnitsSold: number;
+  avgTicketSize: number;
+  // Busiest hours (60-min buckets)
+  busiestHours: Array<{
+    hour: string;
+    transactions: number;
+    revenue: number;
+  }>;
+}
+
+/**
+ * Stock valuation by bar
+ */
+export interface StockValuationItem {
+  drinkId: number;
+  drinkName: string;
+  quantity: number;
+  unitCost: number; // cents
+  value: number; // cents (quantity * unitCost)
+  ownershipMode: 'purchased' | 'consignment';
+}
+
+export interface BarStockValuation {
+  barId: number;
+  barName: string;
+  totalValue: number; // cents
+  purchasedValue: number; // cents
+  consignmentValue: number; // cents
+  items: StockValuationItem[];
+}
+
+export interface StockValuationSummary {
+  totalValue: number; // cents
+  purchasedValue: number; // cents
+  consignmentValue: number; // cents
+  byBar: BarStockValuation[];
+}
+
+/**
+ * COGS breakdown by bar
+ */
+export interface CogsBreakdownByBar {
+  barId: number;
+  barName: string;
+  totalCogs: number; // cents
+  byDrink: Array<{
+    drinkId: number;
+    drinkName: string;
+    quantityUsed: number;
+    cost: number; // cents
+  }>;
 }
 
 export interface PeakHourEntry {
@@ -73,6 +178,19 @@ export interface ReportData {
   remainingStock: RemainingStockSummary;
   consumptionByDrink: ConsumptionEntry[];
   warnings: string[];
+  // Enhanced fields (optional for backward compatibility)
+  peakHoursByBucket?: {
+    '5min': PeakHourBucketEntry[];
+    '15min': PeakHourBucketEntry[];
+    '60min': PeakHourBucketEntry[];
+  };
+  barBreakdowns?: BarBreakdown[];
+  posBreakdowns?: PosBreakdown[];
+  stockValuation?: StockValuationSummary;
+  cogsBreakdown?: CogsBreakdownByBar[];
+  // Export paths
+  csvPath?: string;
+  pdfPath?: string;
 }
 
 // ============= COMPARISON INTERFACES =============

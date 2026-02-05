@@ -197,4 +197,77 @@ export class ProductsRepository {
       where: { id },
     });
   }
+
+  /** Find all products for an event with the given name (event-level and per-bar). Used to sync with recipe "producto final". */
+  async findByEventIdAndName(eventId: number, name: string): Promise<EventProductWithCocktails[]> {
+    return this.prisma.eventProduct.findMany({
+      where: { eventId, name },
+      include: {
+        cocktails: {
+          include: {
+            cocktail: {
+              select: { id: true, name: true, price: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    }) as Promise<EventProductWithCocktails[]>;
+  }
+
+  async deleteManyByIds(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.prisma.eventProduct.deleteMany({
+      where: { id: { in: ids } },
+    });
+  }
+
+  /**
+   * Get products available for a specific bar.
+   * Returns bar-specific products OR event-wide products if no bar-specific exists.
+   * This handles the "producto final" flow where recipes create both event-wide and bar-specific products.
+   */
+  async findProductsForBar(eventId: number, barId: number): Promise<EventProductWithCocktails[]> {
+    // Get bar-specific products
+    const barProducts = await this.prisma.eventProduct.findMany({
+      where: { eventId, barId },
+      include: {
+        cocktails: {
+          include: {
+            cocktail: {
+              select: { id: true, name: true, price: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Get event-wide products that don't have a bar-specific version
+    const barProductNames = barProducts.map(p => p.name);
+    
+    const eventWideProducts = await this.prisma.eventProduct.findMany({
+      where: { 
+        eventId, 
+        barId: null,
+        // Exclude products that have a bar-specific override
+        name: barProductNames.length > 0 ? { notIn: barProductNames } : undefined,
+      },
+      include: {
+        cocktails: {
+          include: {
+            cocktail: {
+              select: { id: true, name: true, price: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Combine and sort
+    return [...barProducts, ...eventWideProducts].sort((a, b) => 
+      a.name.localeCompare(b.name)
+    ) as EventProductWithCocktails[];
+  }
 }

@@ -310,15 +310,15 @@ export class StockService {
   async assignStock(
     userId: number,
     dto: AssignStockDto,
-  ): Promise<{ stock: Stock; movement: any }> {
+  ): Promise<{ stock: Stock; movement: any; eventProduct?: any }> {
     // Verify event ownership
     const event = await this.eventsService.findByIdWithOwner(dto.eventId);
     if (!this.eventsService.isOwner(event, userId)) {
       throw new NotOwnerException();
     }
 
-    // Verify bar belongs to event
-    await this.barsService.findOne(dto.eventId, dto.barId, userId);
+    // Verify bar belongs to event and get bar info
+    const bar = await this.barsService.findOne(dto.eventId, dto.barId, userId);
 
     // Get global inventory entry
     const globalInv = await this.globalInventoryService.findOne(
@@ -346,14 +346,18 @@ export class StockService {
 
       // Handle null supplier - use 0 as placeholder if needed
       const supplierIdForStock = globalInv.supplierId ?? 0;
+      const sellAsWholeUnit = dto.sellAsWholeUnit ?? false;
 
       // Create or update stock in bar
+      // La clave compuesta incluye sellAsWholeUnit para permitir stock separado
+      // para venta directa vs componentes de recetas
       const stock = await tx.stock.upsert({
         where: {
-          barId_drinkId_supplierId: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
             barId: dto.barId,
             drinkId: globalInv.drinkId,
             supplierId: supplierIdForStock,
+            sellAsWholeUnit,
           },
         },
         create: {
@@ -364,9 +368,15 @@ export class StockService {
           unitCost: globalInv.unitCost,
           currency: globalInv.currency,
           ownershipMode: globalInv.ownershipMode,
+          sellAsWholeUnit,
+          salePrice: sellAsWholeUnit ? dto.salePrice : null,
         },
         update: {
           quantity: { increment: dto.quantity },
+          // Update sale price if provided for direct sale stock
+          ...(sellAsWholeUnit && dto.salePrice && {
+            salePrice: dto.salePrice,
+          }),
         },
         include: { drink: true, supplier: true },
       });
@@ -384,13 +394,81 @@ export class StockService {
           quantity: dto.quantity,
           type: MovementType.transfer_in,
           reason: StockMovementReason.ASSIGN_TO_BAR,
+          sellAsWholeUnit,
           performedById: userId,
           globalInventoryId: dto.globalInventoryId,
           notes: dto.notes,
         },
       });
 
-      return { stock, movement };
+      // If sellAsWholeUnit is true, create/update EventProduct for direct sale
+      let eventProduct = null;
+      if (dto.sellAsWholeUnit && dto.salePrice) {
+        // Get drink details for naming
+        const drink = await tx.drink.findUnique({
+          where: { id: globalInv.drinkId },
+        });
+
+        if (drink) {
+          // First, find or create Cocktail entry for the drink
+          // (EventProduct uses cocktails through join table)
+          let cocktail = await tx.cocktail.findFirst({
+            where: { name: drink.name },
+          });
+
+          if (!cocktail) {
+            cocktail = await tx.cocktail.create({
+              data: {
+                name: drink.name,
+                price: dto.salePrice,
+                volume: drink.volume,
+                isActive: true,
+              },
+            });
+          }
+
+          // Create or update EventProduct for this bar
+          // EventProduct has unique constraint on [eventId, name, barId]
+          const productName = drink.name;
+
+          eventProduct = await tx.eventProduct.upsert({
+            where: {
+              eventId_name_barId: {
+                eventId: dto.eventId,
+                name: productName,
+                barId: dto.barId,
+              },
+            },
+            create: {
+              eventId: dto.eventId,
+              barId: dto.barId,
+              name: productName,
+              price: dto.salePrice,
+              isCombo: false,
+            },
+            update: {
+              price: dto.salePrice,
+            },
+          });
+
+          // Link the EventProduct to the Cocktail via join table
+          await tx.eventProductCocktail.upsert({
+            where: {
+              eventProductId_cocktailId: {
+                eventProductId: eventProduct.id,
+                cocktailId: cocktail.id,
+              },
+            },
+            create: {
+              eventProductId: eventProduct.id,
+              cocktailId: cocktail.id,
+            },
+            update: {},
+          });
+        }
+      }
+
+      return { stock, movement, eventProduct };
     });
   }
 
@@ -442,10 +520,11 @@ export class StockService {
       // Decrease source stock
       const fromStock = await tx.stock.update({
         where: {
-          barId_drinkId_supplierId: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
             barId: dto.fromBarId,
             drinkId: dto.drinkId,
             supplierId: stockToMove.supplierId,
+            sellAsWholeUnit: stockToMove.sellAsWholeUnit,
           },
         },
         data: {
@@ -458,22 +537,24 @@ export class StockService {
       if (fromStock.quantity === 0) {
         await tx.stock.delete({
           where: {
-            barId_drinkId_supplierId: {
+            barId_drinkId_supplierId_sellAsWholeUnit: {
               barId: dto.fromBarId,
               drinkId: dto.drinkId,
               supplierId: stockToMove.supplierId,
+              sellAsWholeUnit: stockToMove.sellAsWholeUnit,
             },
           },
         });
       }
 
-      // Increase destination stock
+      // Increase destination stock (preserving sellAsWholeUnit from source)
       const toStock = await tx.stock.upsert({
         where: {
-          barId_drinkId_supplierId: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
             barId: dto.toBarId,
             drinkId: dto.drinkId,
             supplierId: stockToMove.supplierId,
+            sellAsWholeUnit: stockToMove.sellAsWholeUnit,
           },
         },
         create: {
@@ -484,6 +565,8 @@ export class StockService {
           unitCost: stockToMove.unitCost,
           currency: stockToMove.currency,
           ownershipMode: stockToMove.ownershipMode,
+          sellAsWholeUnit: stockToMove.sellAsWholeUnit,
+          salePrice: stockToMove.salePrice,
         },
         update: {
           quantity: { increment: dto.quantity },
@@ -504,6 +587,7 @@ export class StockService {
           quantity: dto.quantity,
           type: MovementType.transfer_in,
           reason: StockMovementReason.MOVE_BETWEEN_BARS,
+          sellAsWholeUnit: stockToMove.sellAsWholeUnit,
           performedById: userId,
           notes: dto.notes,
         },
@@ -529,20 +613,19 @@ export class StockService {
     // Verify bar belongs to event
     await this.barsService.findOne(dto.eventId, dto.barId, userId);
 
-    // Get bar stock
-    const barStock = await this.stockRepository.findByBarIdAndDrinkId(
+    // Get the specific stock entry using the composite key
+    const stockToReturn = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
       dto.barId,
       dto.drinkId,
+      dto.supplierId,
+      dto.sellAsWholeUnit,
     );
 
-    if (!barStock || barStock.length === 0) {
+    if (!stockToReturn) {
       throw new NotFoundException(
-        `No stock found for drink ${dto.drinkId} in bar`,
+        `No stock found for drink ${dto.drinkId} with supplier ${dto.supplierId} and sellAsWholeUnit=${dto.sellAsWholeUnit} in bar`,
       );
     }
-
-    // Find matching stock entry
-    const stockToReturn = barStock.find((s) => s.quantity >= dto.quantity) || barStock[0];
 
     if (stockToReturn.quantity < dto.quantity) {
       throw new BadRequestException(
@@ -554,10 +637,11 @@ export class StockService {
       // Decrease bar stock
       const updatedStock = await tx.stock.update({
         where: {
-          barId_drinkId_supplierId: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
             barId: dto.barId,
             drinkId: dto.drinkId,
             supplierId: stockToReturn.supplierId,
+            sellAsWholeUnit: stockToReturn.sellAsWholeUnit,
           },
         },
         data: {
@@ -569,10 +653,11 @@ export class StockService {
       if (updatedStock.quantity === 0) {
         await tx.stock.delete({
           where: {
-            barId_drinkId_supplierId: {
+            barId_drinkId_supplierId_sellAsWholeUnit: {
               barId: dto.barId,
               drinkId: dto.drinkId,
               supplierId: stockToReturn.supplierId,
+              sellAsWholeUnit: stockToReturn.sellAsWholeUnit,
             },
           },
         });
@@ -640,6 +725,7 @@ export class StockService {
           quantity: dto.quantity,
           type: MovementType.transfer_in,
           reason: StockMovementReason.RETURN_TO_GLOBAL,
+          sellAsWholeUnit: dto.sellAsWholeUnit,
           performedById: userId,
           globalInventoryId: globalInv.id,
           notes: dto.notes,

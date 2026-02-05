@@ -132,14 +132,16 @@ export class SalesRepository {
       });
 
       // Deduct stock and create inventory movements
+      // Recipe-based sales use sellAsWholeUnit=false stock
       for (const depletion of depletions) {
-        // Update stock
+        // Update stock (using recipe stock, sellAsWholeUnit=false)
         await tx.stock.update({
           where: {
-            barId_drinkId_supplierId: {
+            barId_drinkId_supplierId_sellAsWholeUnit: {
               barId: depletion.barId,
               drinkId: depletion.drinkId,
               supplierId: depletion.supplierId,
+              sellAsWholeUnit: false,
             },
           },
           data: {

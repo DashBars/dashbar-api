@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { RecipesRepository } from './recipes.repository';
 import { EventsService } from '../events/events.service';
+import { ProductsService } from '../products/products.service';
+import { BarsService } from '../bars/bars.service';
 import { CreateRecipeDto, UpdateRecipeDto } from './dto';
 import { EventStartedException, NotOwnerException } from '../common/exceptions';
 import { BarType } from '@prisma/client';
@@ -11,6 +13,8 @@ export class RecipesService {
   constructor(
     private readonly recipesRepository: RecipesRepository,
     private readonly eventsService: EventsService,
+    private readonly productsService: ProductsService,
+    private readonly barsService: BarsService,
   ) {}
 
   /**
@@ -30,13 +34,16 @@ export class RecipesService {
 
   /**
    * Validate recipe components
+   * Recipes require at least 2 components (single-ingredient items should use "venta directa" on stock)
    */
   private validateComponents(
     components: Array<{ drinkId: number; percentage: number }>,
     hasIce: boolean,
   ): void {
-    if (components.length === 0) {
-      throw new BadRequestException('Recipe must have at least one component');
+    if (components.length < 2) {
+      throw new BadRequestException(
+        'Las recetas requieren al menos 2 componentes. Para vender un insumo individual (ej: botella de agua), usá la opción "Venta directa" al asignar stock a la barra.',
+      );
     }
 
     const totalPercentage = components.reduce((sum, c) => sum + c.percentage, 0);
@@ -83,14 +90,40 @@ export class RecipesService {
       );
     }
 
-    return this.recipesRepository.create({
+    const recipe = await this.recipesRepository.create({
       eventId,
       cocktailName: normalizedName,
       glassVolume: dto.glassVolume,
       hasIce: dto.hasIce,
-      barTypes: dto.barTypes,
+      salePrice: dto.salePrice ?? 0,
+      barTypes: dto.barTypes ?? [],
       components: dto.components,
     });
+
+    // If "producto final": create event product + one product per bar of selected types
+    const salePrice = dto.salePrice ?? 0;
+    const barTypes = dto.barTypes ?? [];
+    if (salePrice > 0 && barTypes.length > 0) {
+      const cocktail = await this.recipesRepository.findCocktailByName(normalizedName);
+      if (cocktail) {
+        await this.productsService.create(eventId, userId, {
+          name: normalizedName,
+          price: salePrice,
+          cocktailIds: [cocktail.id],
+        });
+        const bars = await this.barsService.findAllByEvent(eventId, userId);
+        for (const bar of bars.filter((b) => barTypes.includes(b.type))) {
+          await this.productsService.create(eventId, userId, {
+            name: normalizedName,
+            price: salePrice,
+            cocktailIds: [cocktail.id],
+            barId: bar.id,
+          });
+        }
+      }
+    }
+
+    return recipe;
   }
 
   /**
@@ -177,7 +210,34 @@ export class RecipesService {
       dto.cocktailName = normalizedName;
     }
 
-    return this.recipesRepository.update(recipeId, dto);
+    const updated = await this.recipesRepository.update(recipeId, dto);
+    const effectiveName = updated.cocktailName;
+    const salePrice = dto.salePrice ?? 0;
+    const barTypes = dto.barTypes ?? [];
+
+    // Sync "producto final" products: remove any existing, then create if final product
+    await this.productsService.deleteByEventIdAndName(eventId, effectiveName, userId);
+    if (salePrice > 0 && barTypes.length > 0) {
+      const cocktail = await this.recipesRepository.findCocktailByName(effectiveName);
+      if (cocktail) {
+        await this.productsService.create(eventId, userId, {
+          name: effectiveName,
+          price: salePrice,
+          cocktailIds: [cocktail.id],
+        });
+        const bars = await this.barsService.findAllByEvent(eventId, userId);
+        for (const bar of bars.filter((b) => barTypes.includes(b.type))) {
+          await this.productsService.create(eventId, userId, {
+            name: effectiveName,
+            price: salePrice,
+            cocktailIds: [cocktail.id],
+            barId: bar.id,
+          });
+        }
+      }
+    }
+
+    return updated;
   }
 
   /**
@@ -185,7 +245,10 @@ export class RecipesService {
    */
   async delete(eventId: number, recipeId: number, userId: number): Promise<void> {
     await this.validateCanModify(eventId, userId);
-    await this.findOne(eventId, recipeId); // Ensure recipe exists in event
+    const recipe = await this.findOne(eventId, recipeId); // Ensure recipe exists in event
+
+    // Remove any "producto final" products linked to this recipe name
+    await this.productsService.deleteByEventIdAndName(eventId, recipe.cocktailName, userId);
 
     await this.recipesRepository.delete(recipeId);
   }
@@ -220,6 +283,7 @@ export class RecipesService {
           cocktailName: recipe.cocktailName,
           glassVolume: recipe.glassVolume,
           hasIce: recipe.hasIce,
+          salePrice: recipe.salePrice || 0,
           barTypes: [toBarType],
           components: recipe.components.map((c) => ({
             drinkId: c.drinkId,

@@ -246,6 +246,7 @@ export class TransfersService {
         drinkId: s.drinkId,
         supplierId: s.supplierId,
         quantity: s.quantity,
+        sellAsWholeUnit: s.sellAsWholeUnit,
       })),
     );
 

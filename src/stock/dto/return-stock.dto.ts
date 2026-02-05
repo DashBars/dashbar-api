@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export class ReturnStockDto {
   @IsInt()
@@ -12,6 +12,13 @@ export class ReturnStockDto {
   @IsInt()
   @Min(1)
   drinkId: number;
+
+  @IsInt()
+  @Min(1)
+  supplierId: number;
+
+  @IsBoolean()
+  sellAsWholeUnit: boolean;
 
   @IsInt()
   @Min(1)

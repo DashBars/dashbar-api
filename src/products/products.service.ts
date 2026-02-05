@@ -92,4 +92,15 @@ export class ProductsService {
 
     await this.productsRepository.delete(productId);
   }
+
+  /**
+   * Delete all products for an event with the given name (event-level and per-bar).
+   * Used when updating or removing "producto final" from a recipe.
+   */
+  async deleteByEventIdAndName(eventId: number, name: string, userId: number): Promise<void> {
+    await this.validateCanModify(eventId, userId);
+    const products = await this.productsRepository.findByEventIdAndName(eventId, name);
+    const ids = products.map((p) => p.id);
+    await this.productsRepository.deleteManyByIds(ids);
+  }
 }

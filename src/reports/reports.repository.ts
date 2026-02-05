@@ -9,6 +9,13 @@ import {
   PeakHourEntry,
   TimeSeriesEntry,
   EligibleEventForComparison,
+  PeakHourBucketEntry,
+  BarBreakdown,
+  PosBreakdown,
+  BarStockValuation,
+  StockValuationSummary,
+  CogsBreakdownByBar,
+  BucketSize,
 } from './interfaces/report.interface';
 
 interface TopProductResult {
@@ -393,5 +400,536 @@ export class ReportsRepository {
       where: { id: { in: eventIds } },
       include: { owner: true },
     });
+  }
+
+  // ============= ENHANCED REPORTING METHODS =============
+
+  /**
+   * Get peak hours by bucket size using POSSale data
+   */
+  async getPeakHoursByBucket(
+    eventId: number,
+    bucketMinutes: BucketSize,
+  ): Promise<PeakHourBucketEntry[]> {
+    const intervalSql = `${bucketMinutes} minutes`;
+
+    // Query to get time-bucketed sales with top product per bucket
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        bucket_start: Date;
+        bucket_end: Date;
+        sales_count: bigint;
+        revenue: bigint;
+        top_product: string | null;
+      }>
+    >`
+      WITH bucketed_sales AS (
+        SELECT 
+          date_trunc('hour', ps.created_at) + 
+            (FLOOR(EXTRACT(MINUTE FROM ps.created_at) / ${bucketMinutes}) * INTERVAL '1 minute' * ${bucketMinutes}) AS bucket_start,
+          ps.id as sale_id,
+          ps.total as revenue
+        FROM pos_sale ps
+        WHERE ps.event_id = ${eventId}
+          AND ps.status = 'COMPLETED'
+      ),
+      bucket_stats AS (
+        SELECT 
+          bucket_start,
+          bucket_start + INTERVAL '${Prisma.raw(intervalSql)}' AS bucket_end,
+          COUNT(sale_id) AS sales_count,
+          SUM(revenue) AS revenue
+        FROM bucketed_sales
+        GROUP BY bucket_start
+      ),
+      top_products_per_bucket AS (
+        SELECT DISTINCT ON (bs.bucket_start)
+          bs.bucket_start,
+          psi.product_name_snapshot as top_product
+        FROM bucketed_sales bs2
+        JOIN pos_sale_item psi ON psi.sale_id = bs2.sale_id
+        JOIN bucket_stats bs ON bs.bucket_start = bs2.bucket_start
+        GROUP BY bs.bucket_start, psi.product_name_snapshot
+        ORDER BY bs.bucket_start, SUM(psi.quantity) DESC
+      )
+      SELECT 
+        bs.bucket_start,
+        bs.bucket_end,
+        bs.sales_count,
+        bs.revenue,
+        tp.top_product
+      FROM bucket_stats bs
+      LEFT JOIN top_products_per_bucket tp ON tp.bucket_start = bs.bucket_start
+      ORDER BY bs.revenue DESC
+    `;
+
+    return result.map((row) => ({
+      startTime: row.bucket_start.toISOString(),
+      endTime: row.bucket_end.toISOString(),
+      salesCount: Number(row.sales_count),
+      revenue: Number(row.revenue),
+      topProduct: row.top_product || undefined,
+    }));
+  }
+
+  /**
+   * Get sales totals from POSSale (newer POS system)
+   */
+  async getPosSalesTotals(eventId: number): Promise<{
+    totalRevenue: number;
+    totalUnits: number;
+    orderCount: number;
+  }> {
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        total_revenue: bigint;
+        total_units: bigint;
+        order_count: bigint;
+      }>
+    >`
+      SELECT
+        COALESCE(SUM(ps.total), 0) as total_revenue,
+        COALESCE(SUM(psi.quantity), 0) as total_units,
+        COUNT(DISTINCT ps.id) as order_count
+      FROM pos_sale ps
+      LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.event_id = ${eventId}
+        AND ps.status = 'COMPLETED'
+    `;
+
+    const row = result[0] || { total_revenue: 0n, total_units: 0n, order_count: 0n };
+    return {
+      totalRevenue: Number(row.total_revenue),
+      totalUnits: Number(row.total_units),
+      orderCount: Number(row.order_count),
+    };
+  }
+
+  /**
+   * Get bar breakdowns with all metrics from POSSale
+   */
+  async getBarBreakdowns(eventId: number): Promise<BarBreakdown[]> {
+    // Get bars for the event
+    const bars = await this.prisma.bar.findMany({
+      where: { eventId },
+      select: { id: true, name: true, type: true },
+    });
+
+    const breakdowns: BarBreakdown[] = [];
+
+    for (const bar of bars) {
+      // Get totals for this bar
+      const totalsResult = await this.prisma.$queryRaw<
+        Array<{
+          total_revenue: bigint;
+          total_units: bigint;
+          order_count: bigint;
+        }>
+      >`
+        SELECT
+          COALESCE(SUM(ps.total), 0) as total_revenue,
+          COALESCE(SUM(psi.quantity), 0) as total_units,
+          COUNT(DISTINCT ps.id) as order_count
+        FROM pos_sale ps
+        LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.event_id = ${eventId}
+          AND ps.bar_id = ${bar.id}
+          AND ps.status = 'COMPLETED'
+      `;
+
+      const totals = totalsResult[0] || { total_revenue: 0n, total_units: 0n, order_count: 0n };
+      const totalRevenue = Number(totals.total_revenue);
+      const totalUnits = Number(totals.total_units);
+      const orderCount = Number(totals.order_count);
+
+      // Get COGS for this bar from inventory movements
+      const cogsResult = await this.prisma.$queryRaw<Array<{ total_cogs: bigint }>>`
+        SELECT COALESCE(SUM(ABS(im.quantity) * s.unit_cost), 0) as total_cogs
+        FROM inventory_movement im
+        JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id
+        WHERE im.bar_id = ${bar.id}
+          AND im.type = 'sale'
+      `;
+      const totalCOGS = Number(cogsResult[0]?.total_cogs || 0);
+
+      const grossProfit = totalRevenue - totalCOGS;
+      const marginPercent = totalRevenue > 0 
+        ? Math.round((grossProfit / totalRevenue) * 10000) / 100 
+        : 0;
+      const avgTicketSize = orderCount > 0 
+        ? Math.round(totalRevenue / orderCount) 
+        : 0;
+
+      // Get top products for this bar
+      const topProductsResult = await this.prisma.$queryRaw<
+        Array<{
+          product_name: string;
+          units: bigint;
+          revenue: bigint;
+        }>
+      >`
+        SELECT
+          psi.product_name_snapshot as product_name,
+          SUM(psi.quantity) as units,
+          SUM(psi.line_total) as revenue
+        FROM pos_sale ps
+        JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.event_id = ${eventId}
+          AND ps.bar_id = ${bar.id}
+          AND ps.status = 'COMPLETED'
+        GROUP BY psi.product_name_snapshot
+        ORDER BY units DESC
+        LIMIT 5
+      `;
+
+      const topProducts: TopProductEntry[] = topProductsResult.map((row) => ({
+        cocktailId: 0, // Not available in snapshot
+        name: row.product_name,
+        unitsSold: Number(row.units),
+        revenue: Number(row.revenue),
+        sharePercent: totalUnits > 0 
+          ? Math.round((Number(row.units) / totalUnits) * 10000) / 100 
+          : 0,
+      }));
+
+      // Get peak hours for this bar
+      const peakHoursResult = await this.prisma.$queryRaw<
+        Array<{
+          hour: Date;
+          units: bigint;
+          revenue: bigint;
+          order_count: bigint;
+        }>
+      >`
+        SELECT
+          date_trunc('hour', ps.created_at) as hour,
+          COALESCE(SUM(psi.quantity), 0) as units,
+          SUM(ps.total) as revenue,
+          COUNT(ps.id) as order_count
+        FROM pos_sale ps
+        LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.event_id = ${eventId}
+          AND ps.bar_id = ${bar.id}
+          AND ps.status = 'COMPLETED'
+        GROUP BY date_trunc('hour', ps.created_at)
+        ORDER BY units DESC
+        LIMIT 5
+      `;
+
+      const peakHours: PeakHourEntry[] = peakHoursResult.map((row) => ({
+        hour: row.hour.toISOString(),
+        units: Number(row.units),
+        revenue: Number(row.revenue),
+        orderCount: Number(row.order_count),
+      }));
+
+      breakdowns.push({
+        barId: bar.id,
+        barName: bar.name,
+        barType: bar.type,
+        totalRevenue,
+        totalCOGS,
+        grossProfit,
+        marginPercent,
+        totalUnitsSold: totalUnits,
+        totalOrderCount: orderCount,
+        avgTicketSize,
+        topProducts,
+        peakHours,
+      });
+    }
+
+    return breakdowns;
+  }
+
+  /**
+   * Get POS terminal breakdowns
+   */
+  async getPosBreakdowns(eventId: number): Promise<PosBreakdown[]> {
+    // Get all POS terminals for the event
+    const posnets = await this.prisma.posnet.findMany({
+      where: { eventId },
+      include: { bar: { select: { id: true, name: true } } },
+    });
+
+    const breakdowns: PosBreakdown[] = [];
+
+    for (const posnet of posnets) {
+      // Get totals for this POS
+      const totalsResult = await this.prisma.$queryRaw<
+        Array<{
+          total_revenue: bigint;
+          total_units: bigint;
+          transaction_count: bigint;
+        }>
+      >`
+        SELECT
+          COALESCE(SUM(ps.total), 0) as total_revenue,
+          COALESCE(SUM(psi.quantity), 0) as total_units,
+          COUNT(DISTINCT ps.id) as transaction_count
+        FROM pos_sale ps
+        LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.posnet_id = ${posnet.id}
+          AND ps.status = 'COMPLETED'
+      `;
+
+      const totals = totalsResult[0] || { total_revenue: 0n, total_units: 0n, transaction_count: 0n };
+      const totalRevenue = Number(totals.total_revenue);
+      const totalUnits = Number(totals.total_units);
+      const transactionCount = Number(totals.transaction_count);
+      const avgTicketSize = transactionCount > 0 
+        ? Math.round(totalRevenue / transactionCount) 
+        : 0;
+
+      // Get busiest hours for this POS
+      const busiestHoursResult = await this.prisma.$queryRaw<
+        Array<{
+          hour: Date;
+          transactions: bigint;
+          revenue: bigint;
+        }>
+      >`
+        SELECT
+          date_trunc('hour', ps.created_at) as hour,
+          COUNT(ps.id) as transactions,
+          SUM(ps.total) as revenue
+        FROM pos_sale ps
+        WHERE ps.posnet_id = ${posnet.id}
+          AND ps.status = 'COMPLETED'
+        GROUP BY date_trunc('hour', ps.created_at)
+        ORDER BY transactions DESC
+        LIMIT 5
+      `;
+
+      const busiestHours = busiestHoursResult.map((row) => ({
+        hour: row.hour.toISOString(),
+        transactions: Number(row.transactions),
+        revenue: Number(row.revenue),
+      }));
+
+      breakdowns.push({
+        posnetId: posnet.id,
+        posnetCode: posnet.code,
+        posnetName: posnet.name,
+        barId: posnet.bar.id,
+        barName: posnet.bar.name,
+        totalRevenue,
+        totalTransactions: transactionCount,
+        totalUnitsSold: totalUnits,
+        avgTicketSize,
+        busiestHours,
+      });
+    }
+
+    return breakdowns;
+  }
+
+  /**
+   * Get stock valuation by bar
+   */
+  async getStockValuation(eventId: number): Promise<StockValuationSummary> {
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        bar_id: number;
+        bar_name: string;
+        drink_id: number;
+        drink_name: string;
+        quantity: number;
+        unit_cost: number;
+        ownership_mode: string;
+      }>
+    >`
+      SELECT
+        b.id as bar_id,
+        b.name as bar_name,
+        d.id as drink_id,
+        d.name as drink_name,
+        s.quantity,
+        s.unit_cost,
+        s.ownership_mode
+      FROM "Stock" s
+      JOIN "Bar" b ON s.bar_id = b.id
+      JOIN "Drink" d ON s.drink_id = d.id
+      WHERE b."eventId" = ${eventId}
+        AND s.quantity > 0
+      ORDER BY b.name, d.name
+    `;
+
+    // Group by bar
+    const barMap = new Map<number, BarStockValuation>();
+
+    for (const row of result) {
+      const value = row.quantity * row.unit_cost;
+      const item = {
+        drinkId: row.drink_id,
+        drinkName: row.drink_name,
+        quantity: row.quantity,
+        unitCost: row.unit_cost,
+        value,
+        ownershipMode: row.ownership_mode as 'purchased' | 'consignment',
+      };
+
+      if (barMap.has(row.bar_id)) {
+        const bar = barMap.get(row.bar_id)!;
+        bar.totalValue += value;
+        if (row.ownership_mode === 'purchased') {
+          bar.purchasedValue += value;
+        } else {
+          bar.consignmentValue += value;
+        }
+        bar.items.push(item);
+      } else {
+        barMap.set(row.bar_id, {
+          barId: row.bar_id,
+          barName: row.bar_name,
+          totalValue: value,
+          purchasedValue: row.ownership_mode === 'purchased' ? value : 0,
+          consignmentValue: row.ownership_mode === 'consignment' ? value : 0,
+          items: [item],
+        });
+      }
+    }
+
+    const byBar = Array.from(barMap.values());
+    const totalValue = byBar.reduce((sum, b) => sum + b.totalValue, 0);
+    const purchasedValue = byBar.reduce((sum, b) => sum + b.purchasedValue, 0);
+    const consignmentValue = byBar.reduce((sum, b) => sum + b.consignmentValue, 0);
+
+    return {
+      totalValue,
+      purchasedValue,
+      consignmentValue,
+      byBar,
+    };
+  }
+
+  /**
+   * Get COGS breakdown by bar
+   */
+  async getCogsBreakdownByBar(eventId: number): Promise<CogsBreakdownByBar[]> {
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        bar_id: number;
+        bar_name: string;
+        drink_id: number;
+        drink_name: string;
+        quantity_used: bigint;
+        unit_cost: number;
+      }>
+    >`
+      SELECT
+        b.id as bar_id,
+        b.name as bar_name,
+        d.id as drink_id,
+        d.name as drink_name,
+        ABS(SUM(im.quantity)) as quantity_used,
+        COALESCE(s.unit_cost, 0) as unit_cost
+      FROM inventory_movement im
+      JOIN "Bar" b ON im.bar_id = b.id
+      JOIN "Drink" d ON im.drink_id = d.id
+      LEFT JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id
+      WHERE b."eventId" = ${eventId}
+        AND im.type = 'sale'
+      GROUP BY b.id, b.name, d.id, d.name, s.unit_cost
+      ORDER BY b.name, d.name
+    `;
+
+    // Group by bar
+    const barMap = new Map<number, CogsBreakdownByBar>();
+
+    for (const row of result) {
+      const quantityUsed = Number(row.quantity_used);
+      const cost = quantityUsed * row.unit_cost;
+      const drinkEntry = {
+        drinkId: row.drink_id,
+        drinkName: row.drink_name,
+        quantityUsed,
+        cost,
+      };
+
+      if (barMap.has(row.bar_id)) {
+        const bar = barMap.get(row.bar_id)!;
+        bar.totalCogs += cost;
+        bar.byDrink.push(drinkEntry);
+      } else {
+        barMap.set(row.bar_id, {
+          barId: row.bar_id,
+          barName: row.bar_name,
+          totalCogs: cost,
+          byDrink: [drinkEntry],
+        });
+      }
+    }
+
+    return Array.from(barMap.values());
+  }
+
+  /**
+   * Get top products from POSSale
+   */
+  async getPosTopProducts(eventId: number, limit: number = 10): Promise<TopProductEntry[]> {
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        product_id: number | null;
+        product_name: string;
+        units: bigint;
+        revenue: bigint;
+      }>
+    >`
+      SELECT
+        psi.product_id,
+        psi.product_name_snapshot as product_name,
+        SUM(psi.quantity) as units,
+        SUM(psi.line_total) as revenue
+      FROM pos_sale ps
+      JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.event_id = ${eventId}
+        AND ps.status = 'COMPLETED'
+      GROUP BY psi.product_id, psi.product_name_snapshot
+      ORDER BY units DESC
+      LIMIT ${limit}
+    `;
+
+    const totalUnits = result.reduce((sum, r) => sum + Number(r.units), 0);
+
+    return result.map((row) => ({
+      cocktailId: row.product_id || 0,
+      name: row.product_name,
+      unitsSold: Number(row.units),
+      revenue: Number(row.revenue),
+      sharePercent: totalUnits > 0 
+        ? Math.round((Number(row.units) / totalUnits) * 10000) / 100 
+        : 0,
+    }));
+  }
+
+  /**
+   * Get time series from POSSale by hour
+   */
+  async getPosTimeSeriesByHour(eventId: number): Promise<TimeSeriesEntry[]> {
+    const result = await this.prisma.$queryRaw<
+      Array<{
+        timestamp: Date;
+        units: bigint;
+        amount: bigint;
+      }>
+    >`
+      SELECT
+        date_trunc('hour', ps.created_at) as timestamp,
+        COALESCE(SUM(psi.quantity), 0) as units,
+        SUM(ps.total) as amount
+      FROM pos_sale ps
+      LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.event_id = ${eventId}
+        AND ps.status = 'COMPLETED'
+      GROUP BY date_trunc('hour', ps.created_at)
+      ORDER BY timestamp ASC
+    `;
+
+    return result.map((row) => ({
+      timestamp: row.timestamp,
+      units: Number(row.units),
+      amount: Number(row.amount),
+    }));
   }
 }

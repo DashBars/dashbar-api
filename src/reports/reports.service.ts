@@ -21,7 +21,17 @@ import {
   PeakHourEntry,
   TimeSeriesEntry,
   EventTimeSeries,
+  PeakHourBucketEntry,
+  BarBreakdown,
+  PosBreakdown,
+  StockValuationSummary,
+  CogsBreakdownByBar,
+  BucketSize,
 } from './interfaces/report.interface';
+
+export interface GenerateReportOptions {
+  bucketSize?: BucketSize;
+}
 
 @Injectable()
 export class ReportsService {
@@ -35,7 +45,11 @@ export class ReportsService {
    * Only the event owner can generate reports
    * Report can be regenerated (upsert behavior)
    */
-  async generateReport(eventId: number, userId: number): Promise<EventReport> {
+  async generateReport(
+    eventId: number,
+    userId: number,
+    options?: GenerateReportOptions,
+  ): Promise<EventReport> {
     // 1. Validate event exists and user is owner
     const event = await this.repository.getEventWithOwner(eventId);
     if (!event) {
@@ -52,11 +66,34 @@ export class ReportsService {
       warnings.push('Event has not finished yet. Report may be incomplete.');
     }
 
-    // 3. Aggregate sales data
-    const salesTotals = await this.repository.getSalesTotals(eventId);
-    const topProducts = await this.repository.getTopProducts(eventId, 10);
-    const timeSeries = await this.repository.getTimeSeriesByHour(eventId);
-    const peakHours = await this.repository.getPeakHours(eventId, 5);
+    // 3. Try to get data from POSSale first (newer system), fallback to legacy Sale
+    let salesTotals = await this.repository.getPosSalesTotals(eventId);
+    let topProducts: TopProductEntry[];
+    let timeSeries: TimeSeriesEntry[];
+    let peakHours: PeakHourEntry[];
+
+    // Check if we have POS data
+    const hasPosData = salesTotals.orderCount > 0;
+
+    if (hasPosData) {
+      // Use POSSale data
+      topProducts = await this.repository.getPosTopProducts(eventId, 10);
+      timeSeries = await this.repository.getPosTimeSeriesByHour(eventId);
+      // Legacy peak hours from POS (60-min buckets)
+      const peakHours60min = await this.repository.getPeakHoursByBucket(eventId, 60);
+      peakHours = peakHours60min.map((p) => ({
+        hour: p.startTime,
+        units: p.salesCount,
+        revenue: p.revenue,
+        orderCount: p.salesCount,
+      })).slice(0, 5);
+    } else {
+      // Fallback to legacy Sale data
+      salesTotals = await this.repository.getSalesTotals(eventId);
+      topProducts = await this.repository.getTopProducts(eventId, 10);
+      timeSeries = await this.repository.getTimeSeriesByHour(eventId);
+      peakHours = await this.repository.getPeakHours(eventId, 5);
+    }
 
     // 4. Get remaining stock with valuation
     const remainingStockItems = await this.repository.getRemainingStock(eventId);
@@ -88,7 +125,39 @@ export class ReportsService {
     // 6. Calculate financial metrics
     const grossProfit = salesTotals.totalRevenue - totalCOGS;
 
-    // 7. Persist report
+    // 7. Get enhanced metrics (all bucket sizes)
+    let peakHours5min: PeakHourBucketEntry[] = [];
+    let peakHours15min: PeakHourBucketEntry[] = [];
+    let peakHours60min: PeakHourBucketEntry[] = [];
+    let barBreakdowns: BarBreakdown[] = [];
+    let posBreakdowns: PosBreakdown[] = [];
+    let stockValuation: StockValuationSummary | null = null;
+    let cogsBreakdown: CogsBreakdownByBar[] = [];
+
+    if (hasPosData) {
+      // Generate all bucket sizes
+      [peakHours5min, peakHours15min, peakHours60min] = await Promise.all([
+        this.repository.getPeakHoursByBucket(eventId, 5),
+        this.repository.getPeakHoursByBucket(eventId, 15),
+        this.repository.getPeakHoursByBucket(eventId, 60),
+      ]);
+
+      // Get breakdowns
+      [barBreakdowns, posBreakdowns, stockValuation, cogsBreakdown] = await Promise.all([
+        this.repository.getBarBreakdowns(eventId),
+        this.repository.getPosBreakdowns(eventId),
+        this.repository.getStockValuation(eventId),
+        this.repository.getCogsBreakdownByBar(eventId),
+      ]);
+    } else {
+      // Still get stock valuation and COGS breakdown even without POS data
+      [stockValuation, cogsBreakdown] = await Promise.all([
+        this.repository.getStockValuation(eventId),
+        this.repository.getCogsBreakdownByBar(eventId),
+      ]);
+    }
+
+    // 8. Persist report with all data
     const report = await this.repository.upsertReport(eventId, {
       totalRevenue: salesTotals.totalRevenue,
       totalCOGS: totalCOGS,
@@ -100,6 +169,14 @@ export class ReportsService {
       timeSeries: timeSeries as any,
       remainingStock: remainingStock as any,
       consumptionByDrink: consumptionByDrink as any,
+      // Enhanced fields
+      peakHours5min: peakHours5min as any,
+      peakHours15min: peakHours15min as any,
+      peakHours60min: peakHours60min as any,
+      barBreakdowns: barBreakdowns as any,
+      posBreakdowns: posBreakdowns as any,
+      stockValuation: stockValuation as any,
+      cogsBreakdown: cogsBreakdown as any,
       warnings,
     });
 
@@ -128,6 +205,11 @@ export class ReportsService {
         ? Math.round((report.grossProfit / report.totalRevenue) * 10000) / 100
         : 0;
 
+    const avgTicketSize =
+      report.totalOrderCount > 0
+        ? Math.round(report.totalRevenue / report.totalOrderCount)
+        : 0;
+
     return {
       summary: {
         totalRevenue: report.totalRevenue,
@@ -143,6 +225,18 @@ export class ReportsService {
       remainingStock: report.remainingStock as any,
       consumptionByDrink: report.consumptionByDrink as any,
       warnings: report.warnings,
+      // Enhanced fields
+      peakHoursByBucket: {
+        '5min': (report.peakHours5min as any) || [],
+        '15min': (report.peakHours15min as any) || [],
+        '60min': (report.peakHours60min as any) || [],
+      },
+      barBreakdowns: (report.barBreakdowns as any) || [],
+      posBreakdowns: (report.posBreakdowns as any) || [],
+      stockValuation: (report.stockValuation as any) || undefined,
+      cogsBreakdown: (report.cogsBreakdown as any) || [],
+      csvPath: report.csvPath || undefined,
+      pdfPath: report.pdfPath || undefined,
     };
   }
 

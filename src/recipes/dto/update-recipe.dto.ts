@@ -17,8 +17,12 @@ export class UpdateRecipeDto {
   @IsOptional()
   hasIce?: boolean;
 
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  salePrice?: number; // cents; with barTypes defines "producto final"
+
   @IsArray()
-  @ArrayMinSize(1)
   @IsEnum(BarType, { each: true })
   @IsOptional()
   barTypes?: BarType[];

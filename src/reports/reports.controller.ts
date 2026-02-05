@@ -5,15 +5,25 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Res,
+  NotFoundException,
+  StreamableFile,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ReportsService } from './reports.service';
+import { ExportsService } from './exports.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '@prisma/client';
-import { GenerateComparisonDto } from './dto';
+import { GenerateComparisonDto, GenerateReportDto } from './dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Controller()
 export class ReportsController {
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(
+    private readonly reportsService: ReportsService,
+    private readonly exportsService: ExportsService,
+  ) {}
 
   /**
    * List all reports for the authenticated user's events
@@ -40,9 +50,90 @@ export class ReportsController {
   @Post('events/:eventId/report/generate')
   generateReport(
     @Param('eventId', ParseIntPipe) eventId: number,
+    @Body() dto: GenerateReportDto,
     @CurrentUser() user: User,
   ) {
-    return this.reportsService.generateReport(eventId, user.id);
+    return this.reportsService.generateReport(eventId, user.id, {
+      bucketSize: dto.bucketSize,
+    });
+  }
+
+  // ============= EXPORT ENDPOINTS =============
+
+  /**
+   * Generate and download CSV export
+   */
+  @Post('events/:eventId/report/csv')
+  async generateCSV(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
+  ) {
+    const filePath = await this.exportsService.generateCSV(eventId, user.id);
+    return { path: filePath, message: 'CSV generated successfully' };
+  }
+
+  /**
+   * Download CSV export
+   */
+  @Get('events/:eventId/report/csv')
+  async downloadCSV(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    let filePath = await this.exportsService.getCSVPath(eventId, user.id);
+    
+    // If no CSV exists, generate it
+    if (!filePath || !fs.existsSync(filePath)) {
+      filePath = await this.exportsService.generateCSV(eventId, user.id);
+    }
+
+    const fileName = path.basename(filePath);
+    res.set({
+      'Content-Type': 'text/csv',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
+
+    const fileStream = fs.createReadStream(filePath);
+    return new StreamableFile(fileStream);
+  }
+
+  /**
+   * Generate and download PDF export
+   */
+  @Post('events/:eventId/report/pdf')
+  async generatePDF(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
+  ) {
+    const filePath = await this.exportsService.generatePDF(eventId, user.id);
+    return { path: filePath, message: 'PDF generated successfully' };
+  }
+
+  /**
+   * Download PDF export
+   */
+  @Get('events/:eventId/report/pdf')
+  async downloadPDF(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: User,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    let filePath = await this.exportsService.getPDFPath(eventId, user.id);
+    
+    // If no PDF exists, generate it
+    if (!filePath || !fs.existsSync(filePath)) {
+      filePath = await this.exportsService.generatePDF(eventId, user.id);
+    }
+
+    const fileName = path.basename(filePath);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
+
+    const fileStream = fs.createReadStream(filePath);
+    return new StreamableFile(fileStream);
   }
 
   // ============= COMPARISON ENDPOINTS =============

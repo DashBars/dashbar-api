@@ -109,7 +109,7 @@ export class TransfersRepository {
    */
   async completeTransfer(
     transfer: StockTransfer,
-    donorStock: Array<{ barId: number; drinkId: number; supplierId: number; quantity: number }>,
+    donorStock: Array<{ barId: number; drinkId: number; supplierId: number; quantity: number; sellAsWholeUnit: boolean }>,
   ): Promise<StockTransfer> {
     return this.prisma.$transaction(async (tx) => {
       let remaining = transfer.quantity;
@@ -128,10 +128,11 @@ export class TransfersRepository {
         // Update stock
         await tx.stock.update({
           where: {
-            barId_drinkId_supplierId: {
+            barId_drinkId_supplierId_sellAsWholeUnit: {
               barId: lot.barId,
               drinkId: lot.drinkId,
               supplierId: lot.supplierId,
+              sellAsWholeUnit: lot.sellAsWholeUnit,
             },
           },
           data: { quantity: { decrement: deduct } },
@@ -154,13 +155,15 @@ export class TransfersRepository {
       }
 
       // 2. Add to receiver stock (use primary supplier from donor)
+      // Transfers are for recipe components, so sellAsWholeUnit=false
       if (primarySupplierId) {
         await tx.stock.upsert({
           where: {
-            barId_drinkId_supplierId: {
+            barId_drinkId_supplierId_sellAsWholeUnit: {
               barId: transfer.receiverBarId,
               drinkId: transfer.drinkId,
               supplierId: primarySupplierId,
+              sellAsWholeUnit: false,
             },
           },
           create: {
@@ -171,6 +174,7 @@ export class TransfersRepository {
             unitCost: 0, // Internal transfer, no cost
             currency: 'ARS',
             ownershipMode: 'purchased', // Transferred stock becomes purchased
+            sellAsWholeUnit: false,
           },
           update: {
             quantity: { increment: transfer.quantity },

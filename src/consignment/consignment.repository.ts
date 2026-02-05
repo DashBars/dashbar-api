@@ -115,10 +115,11 @@ export class ConsignmentRepository {
     barId: number,
     drinkId: number,
     supplierId: number,
+    sellAsWholeUnit: boolean = false,
   ): Promise<ConsignmentStockWithRelations | null> {
     return this.prisma.stock.findUnique({
       where: {
-        barId_drinkId_supplierId: { barId, drinkId, supplierId },
+        barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
       },
       include: {
         drink: { select: { id: true, name: true, sku: true } },
@@ -141,12 +142,13 @@ export class ConsignmentRepository {
     quantityToReturn: number,
     performedById: number,
     notes?: string,
+    sellAsWholeUnit: boolean = false,
   ): Promise<ConsignmentReturn> {
     return this.prisma.$transaction(async (tx) => {
       // 1. Get current stock and verify
       const stock = await tx.stock.findUnique({
         where: {
-          barId_drinkId_supplierId: { barId, drinkId, supplierId },
+          barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
         },
       });
 
@@ -168,7 +170,7 @@ export class ConsignmentRepository {
       const newQuantity = stock.quantity - quantityToReturn;
       await tx.stock.update({
         where: {
-          barId_drinkId_supplierId: { barId, drinkId, supplierId },
+          barId_drinkId_supplierId_sellAsWholeUnit: { barId, drinkId, supplierId, sellAsWholeUnit },
         },
         data: { quantity: newQuantity },
       });

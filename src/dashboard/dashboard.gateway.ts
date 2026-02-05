@@ -20,8 +20,10 @@ import { TransferStatusEvent } from '../transfers/transfers.service';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
+  posnetId?: number; // For POS device connections
   subscribedEvents: Set<number>;
   subscribedBars: Set<number>;
+  subscribedPOS: Set<number>;
 }
 
 @WebSocketGateway({
@@ -44,7 +46,7 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
   ) {}
 
   /**
-   * Handle new connection - validate JWT
+   * Handle new connection - validate JWT (user or POS)
    */
   async handleConnection(client: AuthenticatedSocket) {
     try {
@@ -55,11 +57,24 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
 
       const payload = this.jwtService.verify(token);
-      client.userId = payload.sub;
+      
+      // Check if this is a POS token
+      if (payload.type === 'pos') {
+        client.posnetId = payload.posnetId;
+        client.userId = undefined;
+        // Auto-subscribe POS to its own room
+        const posRoom = `pos:${payload.posnetId}`;
+        await client.join(posRoom);
+        this.logger.log(`POS device connected: ${client.id}, posnetId: ${payload.posnetId}`);
+      } else {
+        client.userId = payload.sub;
+        client.posnetId = undefined;
+        this.logger.log(`Client connected: ${client.id}, userId: ${client.userId}`);
+      }
+      
       client.subscribedEvents = new Set();
       client.subscribedBars = new Set();
-
-      this.logger.log(`Client connected: ${client.id}, userId: ${client.userId}`);
+      client.subscribedPOS = new Set();
     } catch (error: any) {
       this.logger.warn(`Client rejected: ${client.id}, reason: ${error?.message || 'Unknown'}`);
       client.emit('error', { message: 'Authentication failed' });
@@ -237,5 +252,173 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     // Broadcast to donor bar room
     this.server.to(`bar:${data.donorBarId}`).emit('transfer:updated', data);
+  }
+
+  // ============================================
+  // POS-specific subscriptions and events
+  // ============================================
+
+  /**
+   * Subscribe to POS-specific updates (manager dashboard)
+   */
+  @SubscribeMessage('subscribe:pos')
+  async handleSubscribePOS(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { posnetId: number },
+  ) {
+    if (!client.userId) {
+      throw new WsException('Not authenticated');
+    }
+
+    const { posnetId } = data;
+
+    // TODO: Validate user has access to this POS's event
+    
+    const room = `pos:${posnetId}`;
+    await client.join(room);
+    client.subscribedPOS.add(posnetId);
+
+    this.logger.log(`Client ${client.id} subscribed to POS ${posnetId}`);
+
+    return { success: true, room };
+  }
+
+  /**
+   * Unsubscribe from POS
+   */
+  @SubscribeMessage('unsubscribe:pos')
+  async handleUnsubscribePOS(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { posnetId: number },
+  ) {
+    const { posnetId } = data;
+    const room = `pos:${posnetId}`;
+
+    await client.leave(room);
+    client.subscribedPOS.delete(posnetId);
+
+    this.logger.log(`Client ${client.id} unsubscribed from POS ${posnetId}`);
+
+    return { success: true };
+  }
+
+  /**
+   * Handle POS heartbeat from device
+   */
+  @SubscribeMessage('pos:heartbeat')
+  async handlePOSHeartbeat(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { sessionId?: number },
+  ) {
+    if (!client.posnetId) {
+      return { error: 'Not a POS connection' };
+    }
+
+    // Broadcast heartbeat to subscribers
+    this.server.to(`pos:${client.posnetId}`).emit('pos:heartbeat', {
+      posnetId: client.posnetId,
+      timestamp: new Date(),
+      sessionId: data.sessionId,
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Handle pos.sale.completed event from EventEmitter
+   */
+  @OnEvent('pos.sale.completed')
+  handlePOSSaleCompleted(data: {
+    saleId: number;
+    posnetId: number;
+    eventId: number;
+    barId: number;
+    total: number;
+    itemCount: number;
+  }) {
+    this.logger.log(`Broadcasting POS sale completed: posnetId=${data.posnetId}, saleId=${data.saleId}`);
+
+    // Broadcast to POS room
+    this.server.to(`pos:${data.posnetId}`).emit('pos:sale_completed', data);
+
+    // Broadcast to event room (for manager dashboard)
+    this.server.to(`event:${data.eventId}`).emit('pos:sale_completed', data);
+
+    // Broadcast to bar room
+    this.server.to(`bar:${data.barId}`).emit('pos:sale_completed', data);
+  }
+
+  /**
+   * Handle pos.sale.refunded event from EventEmitter
+   */
+  @OnEvent('pos.sale.refunded')
+  handlePOSSaleRefunded(data: {
+    saleId: number;
+    posnetId: number;
+    eventId: number;
+    barId: number;
+    total: number;
+  }) {
+    this.logger.log(`Broadcasting POS sale refunded: posnetId=${data.posnetId}, saleId=${data.saleId}`);
+
+    // Broadcast to POS room
+    this.server.to(`pos:${data.posnetId}`).emit('pos:sale_refunded', data);
+
+    // Broadcast to event room
+    this.server.to(`event:${data.eventId}`).emit('pos:sale_refunded', data);
+
+    // Broadcast to bar room
+    this.server.to(`bar:${data.barId}`).emit('pos:sale_refunded', data);
+  }
+
+  /**
+   * Handle pos.status.changed event from EventEmitter
+   */
+  @OnEvent('pos.status.changed')
+  handlePOSStatusChanged(data: {
+    posnetId: number;
+    eventId: number;
+    previousStatus: string;
+    newStatus: string;
+    reason: string;
+    metrics: any;
+  }) {
+    this.logger.log(`Broadcasting POS status changed: posnetId=${data.posnetId}, ${data.previousStatus} -> ${data.newStatus}`);
+
+    // Broadcast to POS room
+    this.server.to(`pos:${data.posnetId}`).emit('pos:state_update', {
+      posnetId: data.posnetId,
+      state: data.newStatus,
+      reason: data.reason,
+    });
+
+    // Broadcast to event room (for manager dashboard)
+    this.server.to(`event:${data.eventId}`).emit('pos:state_update', {
+      posnetId: data.posnetId,
+      state: data.newStatus,
+      reason: data.reason,
+    });
+  }
+
+  /**
+   * Handle pos.metrics.updated event from EventEmitter
+   */
+  @OnEvent('pos.metrics.updated')
+  handlePOSMetricsUpdated(data: {
+    posnetId: number;
+    eventId: number;
+    metrics: any;
+  }) {
+    // Broadcast to POS room
+    this.server.to(`pos:${data.posnetId}`).emit('pos:metrics_update', {
+      posnetId: data.posnetId,
+      metrics: data.metrics,
+    });
+
+    // Broadcast to event room (for manager dashboard)
+    this.server.to(`event:${data.eventId}`).emit('pos:metrics_update', {
+      posnetId: data.posnetId,
+      metrics: data.metrics,
+    });
   }
 }

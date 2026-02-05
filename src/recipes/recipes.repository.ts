@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventRecipe, BarType, Prisma } from '@prisma/client';
 
-export interface EventRecipeWithRelations extends EventRecipe {
-  barTypes: { barType: BarType }[];
+export interface EventRecipeWithRelations extends Omit<EventRecipe, 'barTypes'> {
+  barTypes: BarType[];
   components: Array<{
     id: number;
     drinkId: number;
@@ -25,6 +25,7 @@ export class RecipesRepository {
     cocktailName: string;
     glassVolume: number;
     hasIce: boolean;
+    salePrice: number;
     barTypes: BarType[];
     components: Array<{ drinkId: number; percentage: number }>;
   }): Promise<EventRecipeWithRelations> {
@@ -58,6 +59,7 @@ export class RecipesRepository {
           cocktailName: data.cocktailName,
           glassVolume: data.glassVolume,
           hasIce: data.hasIce,
+          salePrice: data.salePrice,
         },
       });
 
@@ -114,7 +116,7 @@ export class RecipesRepository {
 
     return {
       ...recipe,
-      barTypes: recipe.barTypes.map((bt) => ({ barType: bt.barType })),
+      barTypes: recipe.barTypes.map((bt) => bt.barType),
       components: recipe.components.map((c) => ({
         id: c.id,
         drinkId: c.drinkId,
@@ -154,7 +156,7 @@ export class RecipesRepository {
 
     return {
       ...recipe,
-      barTypes: recipe.barTypes.map((bt) => ({ barType: bt.barType })),
+      barTypes: recipe.barTypes.map((bt) => bt.barType),
       components: recipe.components.map((c) => ({
         id: c.id,
         drinkId: c.drinkId,
@@ -188,7 +190,7 @@ export class RecipesRepository {
 
     return recipes.map((recipe) => ({
       ...recipe,
-      barTypes: recipe.barTypes.map((bt) => ({ barType: bt.barType })),
+      barTypes: recipe.barTypes.map((bt) => bt.barType),
       components: recipe.components.map((c) => ({
         id: c.id,
         drinkId: c.drinkId,
@@ -232,7 +234,7 @@ export class RecipesRepository {
 
     return recipes.map((recipe) => ({
       ...recipe,
-      barTypes: recipe.barTypes.map((bt) => ({ barType: bt.barType })),
+      barTypes: recipe.barTypes.map((bt) => bt.barType),
       components: recipe.components.map((c) => ({
         id: c.id,
         drinkId: c.drinkId,
@@ -277,7 +279,7 @@ export class RecipesRepository {
 
     return recipes.map((recipe) => ({
       ...recipe,
-      barTypes: recipe.barTypes.map((bt) => ({ barType: bt.barType })),
+      barTypes: recipe.barTypes.map((bt) => bt.barType),
       components: recipe.components.map((c) => ({
         id: c.id,
         drinkId: c.drinkId,
@@ -293,6 +295,7 @@ export class RecipesRepository {
         cocktailName?: string;
         glassVolume?: number;
         hasIce?: boolean;
+        salePrice?: number;
         barTypes?: BarType[];
         components?: Array<{ drinkId: number; percentage: number }>;
     },
@@ -303,6 +306,7 @@ export class RecipesRepository {
       if (data.cocktailName !== undefined) updateData.cocktailName = data.cocktailName;
       if (data.glassVolume !== undefined) updateData.glassVolume = data.glassVolume;
       if (data.hasIce !== undefined) updateData.hasIce = data.hasIce;
+      if (data.salePrice !== undefined) updateData.salePrice = data.salePrice;
 
       if (Object.keys(updateData).length > 0) {
         await tx.eventRecipe.update({
@@ -361,7 +365,7 @@ export class RecipesRepository {
 
   async findCocktailByName(cocktailName: string) {
     return this.prisma.cocktail.findFirst({
-      where: { name: cocktailName },
+      where: { name: { equals: cocktailName.trim(), mode: 'insensitive' } },
     });
   }
 

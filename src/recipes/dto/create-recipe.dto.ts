@@ -1,4 +1,4 @@
-import { IsString, IsInt, IsBoolean, IsArray, ValidateNested, Min, ArrayMinSize, IsEnum } from 'class-validator';
+import { IsString, IsInt, IsBoolean, IsArray, ValidateNested, Min, ArrayMinSize, IsEnum, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BarType } from '@prisma/client';
 import { RecipeComponentDto } from './recipe-component.dto';
@@ -14,10 +14,16 @@ export class CreateRecipeDto {
   @IsBoolean()
   hasIce: boolean;
 
+  /** When set with barTypes, creates event product and bar products (producto final) */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  salePrice?: number; // cents
+
   @IsArray()
-  @ArrayMinSize(1)
   @IsEnum(BarType, { each: true })
-  barTypes: BarType[]; // Array de tipos de barra
+  @IsOptional()
+  barTypes?: BarType[]; // empty = not final product; non-empty = product appears in event and in selected bar types
 
   @IsArray()
   @ArrayMinSize(1)

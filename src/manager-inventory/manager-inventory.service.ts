@@ -182,12 +182,14 @@ export class ManagerInventoryService {
     // Use transaction to ensure consistency
     return this.prisma.$transaction(async (tx) => {
       // Create or update Stock in the bar
+      // Default to recipe component (sellAsWholeUnit=false)
       const stock = await tx.stock.upsert({
         where: {
-          barId_drinkId_supplierId: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
             barId: dto.barId,
             drinkId: inventory.drinkId,
             supplierId: inventory.supplierId,
+            sellAsWholeUnit: false,
           },
         },
         create: {
@@ -198,6 +200,7 @@ export class ManagerInventoryService {
           unitCost: inventory.unitCost,
           currency: inventory.currency,
           ownershipMode: OwnershipMode.purchased,
+          sellAsWholeUnit: false,
         },
         update: {
           quantity: {

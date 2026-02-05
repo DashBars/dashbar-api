@@ -41,8 +41,21 @@ enum DrinkType {
 }
 
 enum PosnetStatus {
-  active
-  inactive
+  OPEN
+  CONGESTED
+  CLOSED
+}
+
+enum POSSaleStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+  VOIDED
+}
+
+enum POSPaymentStatus {
+  SUCCESS
+  FAILED
 }
 
 enum AlarmMetric {
@@ -146,6 +159,8 @@ model User {
   stockReturnsRequested StockReturn[]       @relation("ReturnRequestedBy")
   stockReturnsApproved  StockReturn[]       @relation("ReturnApprovedBy")
   stockReturnsCompleted StockReturn[]       @relation("ReturnCompletedBy")
+  posSessionsOpened     POSSession[]
+  posSalesCashier       POSSale[]
 }
 
 model Venue {
@@ -203,6 +218,9 @@ model Event {
   report               EventReport?
   inventoryAllocations ManagerInventoryAllocation[]
   returnPolicy         ReturnPolicy?
+  posnets              Posnet[]
+  posSales             POSSale[]
+  metricSamples        MetricSample[]
 
   @@map("Event")
 }
@@ -210,11 +228,12 @@ model Event {
 // Recipes per bar type within an event
 // All bars of the same type share the same recipes
 model EventRecipe {
-  id          Int     @id @default(autoincrement())
-  eventId     Int     @map("event_id")
-  cocktailName String @map("cocktail_name") // Nombre del trago a vender
+  id           Int     @id @default(autoincrement())
+  eventId      Int     @map("event_id")
+  cocktailName String  @map("cocktail_name") // Nombre del trago a vender
   glassVolume  Int     @map("glass_volume") // Volumen del vaso en ml
   hasIce       Boolean @default(false) @map("has_ice") // Indica si lleva hielo
+  salePrice    Int     @default(0) @map("sale_price") // Precio de venta en centavos (0 si no es producto final)
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
@@ -253,12 +272,12 @@ model EventRecipeComponent {
 // Products: custom named items that can contain one or multiple cocktails (combos)
 // Replaces EventPrice with more flexibility for naming and bundling
 model EventProduct {
-  id       Int     @id @default(autoincrement())
-  eventId  Int     @map("event_id")
-  barId    Int?    @map("bar_id") // null = producto del evento; set = override por barra
-  name     String  // Custom name for the product (e.g., "Combo Coca + Sprite")
-  price    Int     // Price in cents
-  isCombo  Boolean @default(false) @map("is_combo") // true if contains multiple cocktails
+  id      Int     @id @default(autoincrement())
+  eventId Int     @map("event_id")
+  barId   Int?    @map("bar_id") // null = producto del evento; set = override por barra
+  name    String // Custom name for the product (e.g., "Combo Coca + Sprite")
+  price   Int // Price in cents
+  isCombo Boolean @default(false) @map("is_combo") // true if contains multiple cocktails
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   bar   Bar?  @relation(fields: [barId], references: [id], onDelete: Cascade)
@@ -288,7 +307,7 @@ model EventPrice {
   eventId    Int  @map("event_id")
   cocktailId Int  @map("cocktail_id")
   barId      Int? @map("bar_id") // null = precio por defecto del evento; set = override por barra
-  price      Int  // in cents
+  price      Int // in cents
 
   event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
   cocktail Cocktail @relation(fields: [cocktailId], references: [id])
@@ -319,6 +338,8 @@ model Bar {
   transfersDonated     StockTransfer[]              @relation("TransferDonor")
   inventoryAllocations ManagerInventoryAllocation[]
   stockReturns         StockReturn[]
+  posSales             POSSale[]
+  metricSamples        MetricSample[]
 }
 
 model Stock {
@@ -332,24 +353,47 @@ model Stock {
   ownershipMode OwnershipMode @map("ownership_mode")
   receivedAt    DateTime      @default(now()) @map("received_at")
 
+  // Venta directa: si true, el insumo se vende como unidad completa (ej: botella de agua)
+  // Si false, solo se usa como componente de recetas
+  // Forma parte de la clave primaria para permitir ambos usos del mismo producto
+  sellAsWholeUnit Boolean @default(false) @map("sell_as_whole_unit")
+  salePrice       Int?    @map("sale_price") // Precio de venta en centavos (requerido si sellAsWholeUnit=true)
+
   bar      Bar      @relation(fields: [barId], references: [id])
   drink    Drink    @relation(fields: [drinkId], references: [id])
   supplier Supplier @relation(fields: [supplierId], references: [id])
 
   consignmentReturns ConsignmentReturn[]
 
-  @@id([barId, drinkId, supplierId])
+  // Incluye sellAsWholeUnit en la clave para permitir stock separado para venta directa vs recetas
+  @@id([barId, drinkId, supplierId, sellAsWholeUnit])
 }
 
 model Posnet {
   id      Int          @id @default(autoincrement())
-  status  PosnetStatus
-  traffic Int // %
+  code    String       @unique // Human-friendly short code (e.g., "POS-001")
+  name    String // Descriptive name
+  status  PosnetStatus @default(CLOSED)
+  enabled Boolean      @default(true)
+  traffic Int          @default(0) // %
 
-  barId Int
-  bar   Bar @relation(fields: [barId], references: [id])
+  eventId Int @map("event_id")
+  barId   Int @map("bar_id")
 
-  transactions Transaction[]
+  authToken       String?   @map("auth_token") // For POS device login
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bar   Bar   @relation(fields: [barId], references: [id], onDelete: Cascade)
+
+  transactions  Transaction[]
+  sessions      POSSession[]
+  sales         POSSale[]
+  metricSamples MetricSample[]
+
+  @@map("posnet")
 }
 
 model Transaction {
@@ -396,13 +440,13 @@ model Cocktail {
   isActive    Boolean @default(true) @map("is_active")
   isCombo     Boolean @default(false) @map("is_combo")
 
-  products        Product[]
-  recipeItems     Recipe[]
-  eventPrices     EventPrice[] // DEPRECATED
+  products              Product[]
+  recipeItems           Recipe[]
+  eventPrices           EventPrice[] // DEPRECATED
   eventProductCocktails EventProductCocktail[]
-  recipeOverrides BarRecipeOverride[]
-  sales           Sale[]
-  categories      CocktailCategory[]
+  recipeOverrides       BarRecipeOverride[]
+  sales                 Sale[]
+  categories            CocktailCategory[]
 }
 
 model Drink {
@@ -492,9 +536,10 @@ model Supplier {
 model ConsignmentReturn {
   id Int @id @default(autoincrement())
 
-  stockBarId      Int @map("stock_bar_id")
-  stockDrinkId    Int @map("stock_drink_id")
-  stockSupplierId Int @map("stock_supplier_id")
+  stockBarId           Int     @map("stock_bar_id")
+  stockDrinkId         Int     @map("stock_drink_id")
+  stockSupplierId      Int     @map("stock_supplier_id")
+  stockSellAsWholeUnit Boolean @default(false) @map("stock_sell_as_whole_unit")
 
   supplierId       Int      @map("supplier_id")
   quantityReturned Int      @map("quantity_returned")
@@ -505,7 +550,7 @@ model ConsignmentReturn {
   performedById Int  @map("performed_by_id")
   performedBy   User @relation(fields: [performedById], references: [id])
 
-  stock    Stock    @relation(fields: [stockBarId, stockDrinkId, stockSupplierId], references: [barId, drinkId, supplierId])
+  stock    Stock    @relation(fields: [stockBarId, stockDrinkId, stockSupplierId, stockSellAsWholeUnit], references: [barId, drinkId, supplierId, sellAsWholeUnit])
   supplier Supplier @relation(fields: [supplierId], references: [id])
 
   @@map("consignment_return")
@@ -538,15 +583,16 @@ model InventoryMovement {
   toLocationId     Int?               @map("to_location_id") // barId o null (global)
 
   // Campos existentes (barId deprecated, usar toLocationId)
-  barId       Int?                 @map("bar_id") // DEPRECATED: usar toLocationId
-  drinkId     Int                  @map("drink_id")
-  supplierId  Int                  @map("supplier_id")
-  quantity    Int // Negative for deductions, positive for additions
-  type        MovementType
-  reason      StockMovementReason? // Razón específica del movimiento
-  referenceId Int?                 @map("reference_id") // saleId, returnId, etc.
-  notes       String?
-  createdAt   DateTime             @default(now()) @map("created_at")
+  barId           Int?                 @map("bar_id") // DEPRECATED: usar toLocationId
+  drinkId         Int                  @map("drink_id")
+  supplierId      Int                  @map("supplier_id")
+  quantity        Int // Negative for deductions, positive for additions
+  type            MovementType
+  reason          StockMovementReason? // Razón específica del movimiento
+  sellAsWholeUnit Boolean?             @map("sell_as_whole_unit") // Para diferenciar venta directa vs receta
+  referenceId     Int?                 @map("reference_id") // saleId, returnId, etc.
+  notes           String?
+  createdAt       DateTime             @default(now()) @map("created_at")
 
   // Audit
   performedById Int?  @map("performed_by_id") // Usuario que ejecutó
@@ -684,10 +730,27 @@ model EventReport {
 
   // Detailed data (JSON)
   topProducts        Json @map("top_products") // Array of top sellers
-  peakHours          Json @map("peak_hours") // Peak time windows
+  peakHours          Json @map("peak_hours") // Peak time windows (legacy, 60-min buckets)
   timeSeries         Json @map("time_series") // Bucketed data for charts
   remainingStock     Json @map("remaining_stock") // Stock snapshot with valuation
   consumptionByDrink Json @map("consumption_by_drink") // COGS breakdown
+
+  // Enhanced peak hours by bucket size (5, 15, 60 minutes)
+  peakHours5min  Json? @map("peak_hours_5min") // Array of {startTime, endTime, salesCount, revenue, topProduct}
+  peakHours15min Json? @map("peak_hours_15min")
+  peakHours60min Json? @map("peak_hours_60min")
+
+  // Per-bar and per-POS breakdowns
+  barBreakdowns Json? @map("bar_breakdowns") // Per-bar stats
+  posBreakdowns Json? @map("pos_breakdowns") // Per-POS terminal stats
+
+  // Stock valuation details
+  stockValuation Json? @map("stock_valuation") // {totalValue, byBar: [...]}
+  cogsBreakdown  Json? @map("cogs_breakdown") // Cost of goods sold details by bar
+
+  // Export file paths
+  csvPath String? @map("csv_path") // Path to generated CSV
+  pdfPath String? @map("pdf_path") // Path to generated PDF
 
   // Metadata
   warnings String[] @default([]) // Missing data warnings
@@ -821,4 +884,109 @@ model StockReturn {
   supplier Supplier?    @relation(fields: [supplierId], references: [id])
 
   @@map("stock_return")
+}
+
+// =============================================================================
+// POS (Point of Sale) System Models
+// =============================================================================
+
+// POS Session - tracks when a POS terminal is opened/closed
+model POSSession {
+  id             Int       @id @default(autoincrement())
+  posnetId       Int       @map("posnet_id")
+  openedByUserId Int       @map("opened_by_user_id")
+  openedAt       DateTime  @default(now()) @map("opened_at")
+  closedAt       DateTime? @map("closed_at")
+  openingFloat   Int?      @map("opening_float") // Starting cash in drawer (cents)
+  closingFloat   Int?      @map("closing_float") // Ending cash in drawer (cents)
+  notes          String?
+
+  posnet   Posnet    @relation(fields: [posnetId], references: [id], onDelete: Cascade)
+  openedBy User      @relation(fields: [openedByUserId], references: [id])
+  sales    POSSale[]
+
+  @@map("pos_session")
+}
+
+// POS Sale - a completed sale transaction at a POS terminal
+model POSSale {
+  id            Int           @id @default(autoincrement())
+  posnetId      Int           @map("posnet_id")
+  sessionId     Int?          @map("session_id")
+  eventId       Int           @map("event_id")
+  barId         Int           @map("bar_id")
+  cashierUserId Int?          @map("cashier_user_id")
+  status        POSSaleStatus @default(COMPLETED)
+
+  subtotal Int // cents (before tax)
+  tax      Int @default(0) // cents
+  total    Int // cents (subtotal + tax)
+
+  idempotencyKey String?  @unique @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  posnet  Posnet      @relation(fields: [posnetId], references: [id], onDelete: Cascade)
+  session POSSession? @relation(fields: [sessionId], references: [id])
+  event   Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bar     Bar         @relation(fields: [barId], references: [id], onDelete: Cascade)
+  cashier User?       @relation(fields: [cashierUserId], references: [id])
+
+  items    POSSaleItem[]
+  payments POSPayment[]
+
+  @@map("pos_sale")
+}
+
+// POS Sale Item - individual line items in a sale
+model POSSaleItem {
+  id                  Int    @id @default(autoincrement())
+  saleId              Int    @map("sale_id")
+  productId           Int?   @map("product_id") // Reference to EventProduct (can be null if product deleted)
+  cocktailId          Int?   @map("cocktail_id") // Reference to Cocktail for stock depletion
+  productNameSnapshot String @map("product_name_snapshot") // Snapshot of product name at sale time
+  unitPriceSnapshot   Int    @map("unit_price_snapshot") // Snapshot of unit price (cents)
+  quantity            Int
+  lineTotal           Int    @map("line_total") // quantity * unitPriceSnapshot (cents)
+
+  sale POSSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@map("pos_sale_item")
+}
+
+// POS Payment - payment record for a sale
+model POSPayment {
+  id             Int              @id @default(autoincrement())
+  saleId         Int              @map("sale_id")
+  method         PaymentMethod // CASH, CARD, etc.
+  amount         Int // cents
+  currency       String           @default("ARS")
+  status         POSPaymentStatus @default(SUCCESS)
+  idempotencyKey String?          @unique @map("idempotency_key")
+  externalRef    String?          @map("external_ref") // External payment reference (card processor, etc.)
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  sale POSSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@map("pos_payment")
+}
+
+// Metric Sample - time-series metrics for POS/bar/event analytics
+model MetricSample {
+  id          Int      @id @default(autoincrement())
+  posnetId    Int?     @map("posnet_id")
+  barId       Int?     @map("bar_id")
+  eventId     Int      @map("event_id")
+  metricType  String   @map("metric_type") // TPS, AVG_CHECKOUT_MS, QUEUE_LEN, SALES_COUNT, etc.
+  value       Float
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  posnet Posnet? @relation(fields: [posnetId], references: [id], onDelete: Cascade)
+  bar    Bar?    @relation(fields: [barId], references: [id], onDelete: Cascade)
+  event  Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, metricType, periodStart])
+  @@index([posnetId, metricType, periodStart])
+  @@map("metric_sample")
 }
