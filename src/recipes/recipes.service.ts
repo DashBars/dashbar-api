@@ -80,14 +80,57 @@ export class RecipesService {
       }
     }
 
-    // Check if recipe with same cocktail name already exists for this event
+    // Check if recipe with same cocktail name has overlapping bar types
     const existing = await this.recipesRepository.findByEventId(eventId);
     const normalizedName = dto.cocktailName.trim();
-    const duplicate = existing.find((r) => r.cocktailName === normalizedName);
-    if (duplicate) {
-      throw new BadRequestException(
-        `Recipe with cocktail name "${normalizedName}" already exists for this event`,
-      );
+    const requestedBarTypes = dto.barTypes ?? [];
+    
+    // Find recipes with the same name
+    const sameNameRecipes = existing.filter((r) => r.cocktailName === normalizedName);
+    
+    // Helper to check if two recipes have identical configuration
+    const areRecipesIdentical = (
+      recipe: EventRecipeWithRelations,
+      newRecipe: { glassVolume: number; hasIce: boolean; salePrice?: number; components: Array<{ drinkId: number; percentage: number }> }
+    ): boolean => {
+      // Check basic properties
+      if (recipe.glassVolume !== newRecipe.glassVolume) return false;
+      if (recipe.hasIce !== newRecipe.hasIce) return false;
+      if ((recipe.salePrice || 0) !== (newRecipe.salePrice || 0)) return false;
+      
+      // Check components (same drinks with same percentages)
+      if (recipe.components.length !== newRecipe.components.length) return false;
+      
+      const sortedExisting = [...recipe.components].sort((a, b) => a.drinkId - b.drinkId);
+      const sortedNew = [...newRecipe.components].sort((a, b) => a.drinkId - b.drinkId);
+      
+      for (let i = 0; i < sortedExisting.length; i++) {
+        if (sortedExisting[i].drinkId !== sortedNew[i].drinkId) return false;
+        if (sortedExisting[i].percentage !== sortedNew[i].percentage) return false;
+      }
+      
+      return true;
+    };
+    
+    // Check if there's an identical recipe we can just add bar types to
+    for (const recipe of sameNameRecipes) {
+      if (areRecipesIdentical(recipe, dto)) {
+        // Found identical recipe - add the new bar types to it
+        const mergedBarTypes = [...new Set([...recipe.barTypes, ...requestedBarTypes])];
+        return this.recipesRepository.update(recipe.id, { barTypes: mergedBarTypes });
+      }
+    }
+    
+    // Check for overlapping bar types (only if we're creating a new variant)
+    for (const recipe of sameNameRecipes) {
+      const existingBarTypes = recipe.barTypes; // Already BarType[] from repository mapping
+      const overlapping = requestedBarTypes.filter((bt) => existingBarTypes.includes(bt));
+      
+      if (overlapping.length > 0) {
+        throw new BadRequestException(
+          `Ya existe una receta "${normalizedName}" para los tipos de barra: ${overlapping.join(', ')}. Editá la receta existente o elegí otros tipos de barra.`,
+        );
+      }
     }
 
     const recipe = await this.recipesRepository.create({
@@ -197,17 +240,33 @@ export class RecipesService {
       }
     }
 
-    // Check for duplicate cocktail name if name is being updated
-    if (dto.cocktailName !== undefined) {
+    // Check for overlapping bar types if name or barTypes are being updated
+    if (dto.cocktailName !== undefined || dto.barTypes !== undefined) {
       const existing = await this.recipesRepository.findByEventId(eventId);
-      const normalizedName = dto.cocktailName.trim();
-      const duplicate = existing.find((r) => r.cocktailName === normalizedName && r.id !== recipeId);
-      if (duplicate) {
-        throw new BadRequestException(
-          `Recipe with cocktail name "${normalizedName}" already exists for this event`,
-        );
+      const currentRecipe = await this.findOne(eventId, recipeId);
+      const normalizedName = dto.cocktailName?.trim() ?? currentRecipe.cocktailName;
+      const requestedBarTypes = dto.barTypes ?? currentRecipe.barTypes; // Already BarType[] from repository mapping
+      
+      // Find recipes with the same name (excluding current recipe)
+      const sameNameRecipes = existing.filter(
+        (r) => r.cocktailName === normalizedName && r.id !== recipeId
+      );
+      
+      // Check for overlapping bar types
+      for (const recipe of sameNameRecipes) {
+        const existingBarTypes = recipe.barTypes; // Already BarType[] from repository mapping
+        const overlapping = requestedBarTypes.filter((bt) => existingBarTypes.includes(bt));
+        
+        if (overlapping.length > 0) {
+          throw new BadRequestException(
+            `Ya existe una receta "${normalizedName}" para los tipos de barra: ${overlapping.join(', ')}. Editá la receta existente o elegí otros tipos de barra.`,
+          );
+        }
       }
-      dto.cocktailName = normalizedName;
+      
+      if (dto.cocktailName !== undefined) {
+        dto.cocktailName = normalizedName;
+      }
     }
 
     const updated = await this.recipesRepository.update(recipeId, dto);

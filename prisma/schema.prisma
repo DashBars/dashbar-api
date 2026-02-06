@@ -240,7 +240,9 @@ model EventRecipe {
   barTypes   EventRecipeBarType[]
   components EventRecipeComponent[]
 
-  @@unique([eventId, cocktailName])
+  // Removed unique constraint to allow multiple variants of same cocktail
+  // with different configurations for different bar types
+  @@index([eventId, cocktailName])
   @@map("event_recipe")
 }
 
