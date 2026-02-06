@@ -7,8 +7,7 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
-  // Enable CORS for frontend - must be configured before other middleware
-  // FRONTEND_URL can be comma-separated for multiple origins
+  // Enable CORS for frontend
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:3000',
@@ -19,21 +18,19 @@ async function bootstrap() {
       : []),
   ];
 
+  // Trusted deployment domains (personal project)
+  const trustedDomains = ['.vercel.app', '.onrender.com'];
+
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       // Allow requests with no origin (like mobile apps, Postman, etc.)
       if (!origin) {
         return callback(null, true);
       }
-      // Exact match or Vercel preview deployments (same project)
+      // Exact match, or origin from a trusted deployment domain
       if (
         allowedOrigins.includes(origin) ||
-        allowedOrigins.some(
-          (allowed) =>
-            allowed.endsWith('.vercel.app') &&
-            origin.endsWith('.vercel.app') &&
-            origin.includes(allowed.replace('https://', '').split('.')[0]),
-        )
+        trustedDomains.some((domain) => origin.endsWith(domain))
       ) {
         callback(null, true);
       } else {
