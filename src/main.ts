@@ -8,12 +8,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
   // Enable CORS for frontend - must be configured before other middleware
+  // FRONTEND_URL can be comma-separated for multiple origins
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:3000',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:3000',
-    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+    ...(process.env.FRONTEND_URL
+      ? process.env.FRONTEND_URL.split(',').map((u) => u.trim())
+      : []),
   ];
 
   app.enableCors({
@@ -22,9 +25,19 @@ async function bootstrap() {
       if (!origin) {
         return callback(null, true);
       }
-      if (allowedOrigins.indexOf(origin) !== -1) {
+      // Exact match or Vercel preview deployments (same project)
+      if (
+        allowedOrigins.includes(origin) ||
+        allowedOrigins.some(
+          (allowed) =>
+            allowed.endsWith('.vercel.app') &&
+            origin.endsWith('.vercel.app') &&
+            origin.includes(allowed.replace('https://', '').split('.')[0]),
+        )
+      ) {
         callback(null, true);
       } else {
+        console.warn(`CORS blocked origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },
