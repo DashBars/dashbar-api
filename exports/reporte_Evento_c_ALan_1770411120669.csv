@@ -1,0 +1,28 @@
+=== RESUMEN DEL EVENTO ===
+Métrica,Valor
+Evento,Evento c ALan
+Fecha de generación,2026-02-06T20:50:53.443Z
+Ingresos totales,"$0,00"
+Costo de ventas (COGS),"$0,00"
+Ganancia bruta,"$0,00"
+Margen (%),0%
+Unidades vendidas,0
+Cantidad de órdenes,0
+Ticket promedio,"$0,00"
+
+
+=== PRODUCTOS MÁS VENDIDOS ===
+Producto,Unidades,Ingresos,% del total
+
+
+=== VALUACIÓN DE STOCK RESTANTE ===
+Tipo,Valor
+Valor total,"$18.500,00"
+Stock comprado,"$18.500,00"
+Consignación,"$0,00"
+
+
+Stock en barra q:
+Insumo,Cantidad,Costo unit.,Valor total,Tipo
+Coca-Cola,17,"$500,00","$8.500,00",Comprado
+Coca-Cola,20,"$500,00","$10.000,00",Comprado

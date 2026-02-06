@@ -113,6 +113,7 @@ export class SalesRepository {
 
   /**
    * Execute sale with stock depletion in a transaction
+   * Optimized: parallel stock updates + batch inventory movements
    */
   async createSaleWithDepletion(
     barId: number,
@@ -131,34 +132,36 @@ export class SalesRepository {
         data: { barId, cocktailId, quantity },
       });
 
-      // Deduct stock and create inventory movements
-      // Recipe-based sales use sellAsWholeUnit=false stock
-      for (const depletion of depletions) {
-        // Update stock (using recipe stock, sellAsWholeUnit=false)
-        await tx.stock.update({
-          where: {
-            barId_drinkId_supplierId_sellAsWholeUnit: {
-              barId: depletion.barId,
-              drinkId: depletion.drinkId,
-              supplierId: depletion.supplierId,
-              sellAsWholeUnit: false,
+      // Deduct stock in parallel (each targets a different composite key)
+      await Promise.all(
+        depletions.map((depletion) =>
+          tx.stock.update({
+            where: {
+              barId_drinkId_supplierId_sellAsWholeUnit: {
+                barId: depletion.barId,
+                drinkId: depletion.drinkId,
+                supplierId: depletion.supplierId,
+                sellAsWholeUnit: false,
+              },
             },
-          },
-          data: {
-            quantity: { decrement: depletion.quantityToDeduct },
-          },
-        });
+            data: {
+              quantity: { decrement: depletion.quantityToDeduct },
+            },
+          }),
+        ),
+      );
 
-        // Create inventory movement for audit
-        await tx.inventoryMovement.create({
-          data: {
+      // Create all inventory movements in a single batch
+      if (depletions.length > 0) {
+        await tx.inventoryMovement.createMany({
+          data: depletions.map((depletion) => ({
             barId: depletion.barId,
             drinkId: depletion.drinkId,
             supplierId: depletion.supplierId,
-            quantity: -depletion.quantityToDeduct, // Negative for deductions
+            quantity: -depletion.quantityToDeduct,
             type: MovementType.sale,
             referenceId: sale.id,
-          },
+          })),
         });
       }
 

@@ -26,8 +26,10 @@ export class CocktailsController {
   findAll(
     @Query('includeInactive', new ParseBoolPipe({ optional: true }))
     includeInactive?: boolean,
+    @Query('eventId', new ParseIntPipe({ optional: true }))
+    eventId?: number,
   ) {
-    return this.cocktailsService.findAll(includeInactive ?? false);
+    return this.cocktailsService.findAll(includeInactive ?? false, eventId);
   }
 
   @Get('search')

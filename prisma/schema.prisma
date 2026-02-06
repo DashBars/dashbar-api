@@ -221,6 +221,7 @@ model Event {
   posnets              Posnet[]
   posSales             POSSale[]
   metricSamples        MetricSample[]
+  cocktails            Cocktail[] // Event-scoped cocktails
 
   @@map("Event")
 }
@@ -390,7 +391,6 @@ model Posnet {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   bar   Bar   @relation(fields: [barId], references: [id], onDelete: Cascade)
 
-  transactions  Transaction[]
   sessions      POSSession[]
   sales         POSSale[]
   metricSamples MetricSample[]
@@ -398,41 +398,9 @@ model Posnet {
   @@map("posnet")
 }
 
-model Transaction {
-  id            Int           @id @default(autoincrement())
-  amount        Int
-  paymentMethod PaymentMethod
-  timestamp     DateTime      @default(now())
-
-  posnetId Int
-  posnet   Posnet @relation(fields: [posnetId], references: [id])
-
-  orderId Int?   @unique
-  order   Order? @relation(fields: [orderId], references: [id])
-}
-
-model Order {
-  id Int @id @default(autoincrement())
-
-  productId Int
-  product   Product @relation(fields: [productId], references: [id])
-
-  transaction Transaction?
-}
-
-model Product {
-  id     Int     @id @default(autoincrement())
-  amount Int
-  combo  Boolean @default(false)
-
-  cocktailId Int?
-  cocktail   Cocktail? @relation(fields: [cocktailId], references: [id])
-
-  orders Order[]
-}
-
 model Cocktail {
   id          Int     @id @default(autoincrement())
+  eventId     Int?    @map("event_id") // Event scope (null = legacy global cocktails)
   name        String
   description String?
   imageUrl    String? @map("image_url")
@@ -442,13 +410,14 @@ model Cocktail {
   isActive    Boolean @default(true) @map("is_active")
   isCombo     Boolean @default(false) @map("is_combo")
 
-  products              Product[]
-  recipeItems           Recipe[]
+  event                 Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   eventPrices           EventPrice[] // DEPRECATED
   eventProductCocktails EventProductCocktail[]
   recipeOverrides       BarRecipeOverride[]
   sales                 Sale[]
   categories            CocktailCategory[]
+
+  @@unique([eventId, name]) // Unique name per event
 }
 
 model Drink {
@@ -460,8 +429,6 @@ model Drink {
   volume    Int // ml
 
   stocks                Stock[]
-  providers             DrinkProvider[]
-  recipeItems           Recipe[]
   eventRecipeComponents EventRecipeComponent[]
   recipeOverrides       BarRecipeOverride[]
   inventoryMovements    InventoryMovement[]
@@ -471,40 +438,6 @@ model Drink {
   managerInventories    ManagerInventory[]
   globalInventories     GlobalInventory[]
   stockReturns          StockReturn[]
-}
-
-model Provider {
-  id          Int     @id @default(autoincrement())
-  name        String
-  description String?
-  email       String?
-  phone       String?
-
-  drinks DrinkProvider[]
-}
-
-model DrinkProvider {
-  providerId Int @map("provider_id")
-  drinkId    Int @map("drink_id")
-  stock      Int
-  value      Int
-
-  provider Provider @relation(fields: [providerId], references: [id])
-  drink    Drink    @relation(fields: [drinkId], references: [id])
-
-  @@id([providerId, drinkId])
-}
-
-model Recipe {
-  drinkId            Int @map("drink_id")
-  cocktailId         Int @map("cocktail_id")
-  cocktailPercentage Int // %
-
-  drink    Drink    @relation(fields: [drinkId], references: [id])
-  cocktail Cocktail @relation(fields: [cocktailId], references: [id])
-
-  @@id([drinkId, cocktailId])
-  @@map("recipe")
 }
 
 model AlarmConfig {
@@ -609,6 +542,8 @@ model InventoryMovement {
   globalInventoryId Int?             @map("global_inventory_id")
   globalInventory   GlobalInventory? @relation(fields: [globalInventoryId], references: [id])
 
+  @@index([barId, type])
+  @@index([barId, drinkId, supplierId])
   @@map("inventory_movement")
 }
 
@@ -623,6 +558,7 @@ model Sale {
   bar      Bar      @relation(fields: [barId], references: [id])
   cocktail Cocktail @relation(fields: [cocktailId], references: [id])
 
+  @@index([barId, createdAt])
   @@map("sale")
 }
 
@@ -936,6 +872,8 @@ model POSSale {
   items    POSSaleItem[]
   payments POSPayment[]
 
+  @@index([eventId, status, createdAt])
+  @@index([barId, status, createdAt])
   @@map("pos_sale")
 }
 
@@ -952,6 +890,7 @@ model POSSaleItem {
 
   sale POSSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
+  @@index([saleId])
   @@map("pos_sale_item")
 }
 

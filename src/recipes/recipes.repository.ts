@@ -30,9 +30,10 @@ export class RecipesRepository {
     components: Array<{ drinkId: number; percentage: number }>;
   }): Promise<EventRecipeWithRelations> {
     return this.prisma.$transaction(async (tx) => {
-      // Create or find cocktail in catalog
+      // Create or find cocktail scoped to this event
       let cocktail = await tx.cocktail.findFirst({
         where: {
+          eventId: data.eventId,
           name: {
             equals: data.cocktailName,
             mode: 'insensitive', // Case-insensitive search
@@ -41,9 +42,10 @@ export class RecipesRepository {
       });
 
       if (!cocktail) {
-        // Create new cocktail in catalog with default price
+        // Create new cocktail scoped to this event
         cocktail = await tx.cocktail.create({
           data: {
+            eventId: data.eventId,
             name: data.cocktailName,
             price: 0, // Default price, should be set via EventPrice
             volume: data.glassVolume,
@@ -363,9 +365,12 @@ export class RecipesRepository {
     });
   }
 
-  async findCocktailByName(cocktailName: string) {
+  async findCocktailByName(cocktailName: string, eventId?: number) {
     return this.prisma.cocktail.findFirst({
-      where: { name: { equals: cocktailName.trim(), mode: 'insensitive' } },
+      where: { 
+        eventId: eventId ?? undefined,
+        name: { equals: cocktailName.trim(), mode: 'insensitive' } 
+      },
     });
   }
 

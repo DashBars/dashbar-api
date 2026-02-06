@@ -10,9 +10,13 @@ export class CocktailsRepository {
     return this.prisma.cocktail.create({ data });
   }
 
-  async findAll(includeInactive: boolean = false): Promise<Cocktail[]> {
+  async findAll(includeInactive: boolean = false, eventId?: number): Promise<Cocktail[]> {
     return this.prisma.cocktail.findMany({
-      where: includeInactive ? {} : { isActive: true },
+      where: {
+        ...(includeInactive ? {} : { isActive: true }),
+        // Filter by eventId if provided
+        ...(eventId != null ? { eventId } : {}),
+      },
       orderBy: { name: 'asc' },
     });
   }

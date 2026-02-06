@@ -61,11 +61,15 @@ export class CatalogRepository {
   }
 
   /**
-   * Get all active cocktails
+   * Get all active cocktails for an event
    */
-  async getActiveCocktails() {
+  async getActiveCocktails(eventId?: number) {
     return this.prisma.cocktail.findMany({
-      where: { isActive: true },
+      where: { 
+        isActive: true,
+        // Filter by eventId if provided, otherwise include legacy global cocktails
+        ...(eventId != null ? { eventId } : {}),
+      },
     });
   }
 
@@ -86,10 +90,11 @@ export class CatalogRepository {
 
     const categorizedIds = categorizedCocktails.map((c) => c.cocktailId);
 
-    // Get all active cocktails not in any category
+    // Get all active cocktails for this event not in any category
     return this.prisma.cocktail.findMany({
       where: {
         isActive: true,
+        eventId, // Only cocktails scoped to this event
         id: categorizedIds.length > 0 ? { notIn: categorizedIds } : undefined,
       },
       orderBy: { name: 'asc' },
@@ -190,6 +195,17 @@ export class CatalogRepository {
       recipesForBarType.map(r => [r.cocktailName.toLowerCase(), r])
     );
 
+    // Get ALL recipe names for this event (regardless of bar type)
+    // This is needed to distinguish "no recipe at all" (direct sale item)
+    // from "has recipe but not for this bar type" (should be excluded)
+    const allEventRecipes = await this.prisma.eventRecipe.findMany({
+      where: { eventId },
+      select: { cocktailName: true },
+    });
+    const allRecipeNames = new Set(
+      allEventRecipes.map(r => r.cocktailName.toLowerCase())
+    );
+
     // Get bar-specific products first
     const barProducts = await this.prisma.eventProduct.findMany({
       where: { eventId, barId },
@@ -229,23 +245,25 @@ export class CatalogRepository {
     // Filter: only include products that either:
     // 1. Are bar-specific (already filtered by barId), OR
     // 2. Have a recipe assigned to this bar type, OR
-    // 3. Don't have any recipe (direct sale items)
+    // 3. Don't have any recipe in the entire event (direct sale items)
     const filteredProducts = allProducts.filter(product => {
       // Bar-specific products are always included
       if (product.barId === barId) {
         return true;
       }
       
-      // Check if there's a recipe for this product name
-      const hasRecipe = recipeMap.has(product.name.toLowerCase());
+      const productNameLower = product.name.toLowerCase();
       
-      // If no recipe exists, it's a direct sale item - include it
-      if (!hasRecipe) {
+      // Check if there's ANY recipe for this product in the event
+      const hasAnyRecipe = allRecipeNames.has(productNameLower);
+      
+      // If no recipe exists anywhere in the event, it's a direct sale item - include it
+      if (!hasAnyRecipe) {
         return true;
       }
       
-      // If recipe exists, only include if it's assigned to this bar type
-      return allowedCocktailNames.has(product.name.toLowerCase());
+      // Recipe exists — only include if it's assigned to THIS bar type
+      return allowedCocktailNames.has(productNameLower);
     });
 
     // Sort and enrich products with recipe details

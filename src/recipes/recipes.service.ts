@@ -147,7 +147,7 @@ export class RecipesService {
     const salePrice = dto.salePrice ?? 0;
     const barTypes = dto.barTypes ?? [];
     if (salePrice > 0 && barTypes.length > 0) {
-      const cocktail = await this.recipesRepository.findCocktailByName(normalizedName);
+      const cocktail = await this.recipesRepository.findCocktailByName(normalizedName, eventId);
       if (cocktail) {
         await this.productsService.create(eventId, userId, {
           name: normalizedName,
@@ -277,7 +277,7 @@ export class RecipesService {
     // Sync "producto final" products: remove any existing, then create if final product
     await this.productsService.deleteByEventIdAndName(eventId, effectiveName, userId);
     if (salePrice > 0 && barTypes.length > 0) {
-      const cocktail = await this.recipesRepository.findCocktailByName(effectiveName);
+      const cocktail = await this.recipesRepository.findCocktailByName(effectiveName, eventId);
       if (cocktail) {
         await this.productsService.create(eventId, userId, {
           name: effectiveName,

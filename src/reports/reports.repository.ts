@@ -507,6 +507,7 @@ export class ReportsRepository {
 
   /**
    * Get bar breakdowns with all metrics from POSSale
+   * Optimized: uses 4 total queries instead of 4*N (N = number of bars)
    */
   async getBarBreakdowns(eventId: number): Promise<BarBreakdown[]> {
     // Get bars for the event
@@ -515,115 +516,128 @@ export class ReportsRepository {
       select: { id: true, name: true, type: true },
     });
 
-    const breakdowns: BarBreakdown[] = [];
+    if (bars.length === 0) return [];
+    const barIds = bars.map(b => b.id);
 
-    for (const bar of bars) {
-      // Get totals for this bar
-      const totalsResult = await this.prisma.$queryRaw<
-        Array<{
-          total_revenue: bigint;
-          total_units: bigint;
-          order_count: bigint;
-        }>
-      >`
+    // 1. Totals per bar (single query)
+    const totalsResult = await this.prisma.$queryRaw<
+      Array<{ bar_id: number; total_revenue: bigint; total_units: bigint; order_count: bigint }>
+    >`
+      SELECT
+        ps.bar_id,
+        COALESCE(SUM(ps.total), 0) as total_revenue,
+        COALESCE(SUM(psi.quantity), 0) as total_units,
+        COUNT(DISTINCT ps.id) as order_count
+      FROM pos_sale ps
+      LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.event_id = ${eventId}
+        AND ps.bar_id = ANY(${barIds})
+        AND ps.status = 'COMPLETED'
+      GROUP BY ps.bar_id
+    `;
+    const totalsMap = new Map(totalsResult.map(r => [r.bar_id, r]));
+
+    // 2. COGS per bar (single query)
+    const cogsResult = await this.prisma.$queryRaw<
+      Array<{ bar_id: number; total_cogs: bigint }>
+    >`
+      SELECT
+        im.bar_id,
+        COALESCE(SUM(ABS(im.quantity) * s.unit_cost), 0) as total_cogs
+      FROM inventory_movement im
+      JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id AND s.sell_as_whole_unit = false
+      WHERE im.bar_id = ANY(${barIds})
+        AND im.type = 'sale'
+      GROUP BY im.bar_id
+    `;
+    const cogsMap = new Map(cogsResult.map(r => [r.bar_id, Number(r.total_cogs)]));
+
+    // 3. Top products per bar (single query, ranked in SQL)
+    const topProdsResult = await this.prisma.$queryRaw<
+      Array<{ bar_id: number; product_name: string; units: bigint; revenue: bigint; rn: bigint }>
+    >`
+      SELECT bar_id, product_name, units, revenue, rn FROM (
         SELECT
-          COALESCE(SUM(ps.total), 0) as total_revenue,
-          COALESCE(SUM(psi.quantity), 0) as total_units,
-          COUNT(DISTINCT ps.id) as order_count
-        FROM pos_sale ps
-        LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
-        WHERE ps.event_id = ${eventId}
-          AND ps.bar_id = ${bar.id}
-          AND ps.status = 'COMPLETED'
-      `;
-
-      const totals = totalsResult[0] || { total_revenue: 0n, total_units: 0n, order_count: 0n };
-      const totalRevenue = Number(totals.total_revenue);
-      const totalUnits = Number(totals.total_units);
-      const orderCount = Number(totals.order_count);
-
-      // Get COGS for this bar from inventory movements
-      const cogsResult = await this.prisma.$queryRaw<Array<{ total_cogs: bigint }>>`
-        SELECT COALESCE(SUM(ABS(im.quantity) * s.unit_cost), 0) as total_cogs
-        FROM inventory_movement im
-        JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id
-        WHERE im.bar_id = ${bar.id}
-          AND im.type = 'sale'
-      `;
-      const totalCOGS = Number(cogsResult[0]?.total_cogs || 0);
-
-      const grossProfit = totalRevenue - totalCOGS;
-      const marginPercent = totalRevenue > 0 
-        ? Math.round((grossProfit / totalRevenue) * 10000) / 100 
-        : 0;
-      const avgTicketSize = orderCount > 0 
-        ? Math.round(totalRevenue / orderCount) 
-        : 0;
-
-      // Get top products for this bar
-      const topProductsResult = await this.prisma.$queryRaw<
-        Array<{
-          product_name: string;
-          units: bigint;
-          revenue: bigint;
-        }>
-      >`
-        SELECT
+          ps.bar_id,
           psi.product_name_snapshot as product_name,
           SUM(psi.quantity) as units,
-          SUM(psi.line_total) as revenue
+          SUM(psi.line_total) as revenue,
+          ROW_NUMBER() OVER (PARTITION BY ps.bar_id ORDER BY SUM(psi.quantity) DESC) as rn
         FROM pos_sale ps
         JOIN pos_sale_item psi ON psi.sale_id = ps.id
         WHERE ps.event_id = ${eventId}
-          AND ps.bar_id = ${bar.id}
+          AND ps.bar_id = ANY(${barIds})
           AND ps.status = 'COMPLETED'
-        GROUP BY psi.product_name_snapshot
-        ORDER BY units DESC
-        LIMIT 5
-      `;
+        GROUP BY ps.bar_id, psi.product_name_snapshot
+      ) ranked
+      WHERE rn <= 5
+    `;
+    const topProdsMap = new Map<number, typeof topProdsResult>();
+    for (const r of topProdsResult) {
+      if (!topProdsMap.has(r.bar_id)) topProdsMap.set(r.bar_id, []);
+      topProdsMap.get(r.bar_id)!.push(r);
+    }
 
-      const topProducts: TopProductEntry[] = topProductsResult.map((row) => ({
-        cocktailId: 0, // Not available in snapshot
-        name: row.product_name,
-        unitsSold: Number(row.units),
-        revenue: Number(row.revenue),
-        sharePercent: totalUnits > 0 
-          ? Math.round((Number(row.units) / totalUnits) * 10000) / 100 
-          : 0,
-      }));
-
-      // Get peak hours for this bar
-      const peakHoursResult = await this.prisma.$queryRaw<
-        Array<{
-          hour: Date;
-          units: bigint;
-          revenue: bigint;
-          order_count: bigint;
-        }>
-      >`
+    // 4. Peak hours per bar (single query, ranked in SQL)
+    const peakResult = await this.prisma.$queryRaw<
+      Array<{ bar_id: number; hour: Date; units: bigint; revenue: bigint; order_count: bigint; rn: bigint }>
+    >`
+      SELECT bar_id, hour, units, revenue, order_count, rn FROM (
         SELECT
+          ps.bar_id,
           date_trunc('hour', ps.created_at) as hour,
           COALESCE(SUM(psi.quantity), 0) as units,
           SUM(ps.total) as revenue,
-          COUNT(ps.id) as order_count
+          COUNT(DISTINCT ps.id) as order_count,
+          ROW_NUMBER() OVER (PARTITION BY ps.bar_id ORDER BY COALESCE(SUM(psi.quantity), 0) DESC) as rn
         FROM pos_sale ps
         LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
         WHERE ps.event_id = ${eventId}
-          AND ps.bar_id = ${bar.id}
+          AND ps.bar_id = ANY(${barIds})
           AND ps.status = 'COMPLETED'
-        GROUP BY date_trunc('hour', ps.created_at)
-        ORDER BY units DESC
-        LIMIT 5
-      `;
+        GROUP BY ps.bar_id, date_trunc('hour', ps.created_at)
+      ) ranked
+      WHERE rn <= 5
+    `;
+    const peakMap = new Map<number, typeof peakResult>();
+    for (const r of peakResult) {
+      if (!peakMap.has(r.bar_id)) peakMap.set(r.bar_id, []);
+      peakMap.get(r.bar_id)!.push(r);
+    }
 
-      const peakHours: PeakHourEntry[] = peakHoursResult.map((row) => ({
+    // Assemble breakdowns in memory
+    return bars.map((bar) => {
+      const totals = totalsMap.get(bar.id);
+      const totalRevenue = Number(totals?.total_revenue ?? 0n);
+      const totalUnits = Number(totals?.total_units ?? 0n);
+      const orderCount = Number(totals?.order_count ?? 0n);
+      const totalCOGS = cogsMap.get(bar.id) ?? 0;
+      const grossProfit = totalRevenue - totalCOGS;
+      const marginPercent = totalRevenue > 0
+        ? Math.round((grossProfit / totalRevenue) * 10000) / 100
+        : 0;
+      const avgTicketSize = orderCount > 0
+        ? Math.round(totalRevenue / orderCount)
+        : 0;
+
+      const topProducts: TopProductEntry[] = (topProdsMap.get(bar.id) || []).map((row) => ({
+        cocktailId: 0,
+        name: row.product_name,
+        unitsSold: Number(row.units),
+        revenue: Number(row.revenue),
+        sharePercent: totalUnits > 0
+          ? Math.round((Number(row.units) / totalUnits) * 10000) / 100
+          : 0,
+      }));
+
+      const peakHours: PeakHourEntry[] = (peakMap.get(bar.id) || []).map((row) => ({
         hour: row.hour.toISOString(),
         units: Number(row.units),
         revenue: Number(row.revenue),
         orderCount: Number(row.order_count),
       }));
 
-      breakdowns.push({
+      return {
         barId: bar.id,
         barName: bar.name,
         barType: bar.type,
@@ -636,14 +650,13 @@ export class ReportsRepository {
         avgTicketSize,
         topProducts,
         peakHours,
-      });
-    }
-
-    return breakdowns;
+      };
+    });
   }
 
   /**
    * Get POS terminal breakdowns
+   * Optimized: uses 2 total queries instead of 2*N (N = number of posnets)
    */
   async getPosBreakdowns(eventId: number): Promise<PosBreakdown[]> {
     // Get all POS terminals for the event
@@ -652,62 +665,67 @@ export class ReportsRepository {
       include: { bar: { select: { id: true, name: true } } },
     });
 
-    const breakdowns: PosBreakdown[] = [];
+    if (posnets.length === 0) return [];
+    const posnetIds = posnets.map(p => p.id);
 
-    for (const posnet of posnets) {
-      // Get totals for this POS
-      const totalsResult = await this.prisma.$queryRaw<
-        Array<{
-          total_revenue: bigint;
-          total_units: bigint;
-          transaction_count: bigint;
-        }>
-      >`
+    // 1. Totals per posnet (single query)
+    const totalsResult = await this.prisma.$queryRaw<
+      Array<{ posnet_id: number; total_revenue: bigint; total_units: bigint; transaction_count: bigint }>
+    >`
+      SELECT
+        ps.posnet_id,
+        COALESCE(SUM(ps.total), 0) as total_revenue,
+        COALESCE(SUM(psi.quantity), 0) as total_units,
+        COUNT(DISTINCT ps.id) as transaction_count
+      FROM pos_sale ps
+      LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.posnet_id = ANY(${posnetIds})
+        AND ps.status = 'COMPLETED'
+      GROUP BY ps.posnet_id
+    `;
+    const totalsMap = new Map(totalsResult.map(r => [r.posnet_id, r]));
+
+    // 2. Busiest hours per posnet (single query, ranked in SQL)
+    const hoursResult = await this.prisma.$queryRaw<
+      Array<{ posnet_id: number; hour: Date; transactions: bigint; revenue: bigint; rn: bigint }>
+    >`
+      SELECT posnet_id, hour, transactions, revenue, rn FROM (
         SELECT
-          COALESCE(SUM(ps.total), 0) as total_revenue,
-          COALESCE(SUM(psi.quantity), 0) as total_units,
-          COUNT(DISTINCT ps.id) as transaction_count
-        FROM pos_sale ps
-        LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
-        WHERE ps.posnet_id = ${posnet.id}
-          AND ps.status = 'COMPLETED'
-      `;
-
-      const totals = totalsResult[0] || { total_revenue: 0n, total_units: 0n, transaction_count: 0n };
-      const totalRevenue = Number(totals.total_revenue);
-      const totalUnits = Number(totals.total_units);
-      const transactionCount = Number(totals.transaction_count);
-      const avgTicketSize = transactionCount > 0 
-        ? Math.round(totalRevenue / transactionCount) 
-        : 0;
-
-      // Get busiest hours for this POS
-      const busiestHoursResult = await this.prisma.$queryRaw<
-        Array<{
-          hour: Date;
-          transactions: bigint;
-          revenue: bigint;
-        }>
-      >`
-        SELECT
+          ps.posnet_id,
           date_trunc('hour', ps.created_at) as hour,
           COUNT(ps.id) as transactions,
-          SUM(ps.total) as revenue
+          SUM(ps.total) as revenue,
+          ROW_NUMBER() OVER (PARTITION BY ps.posnet_id ORDER BY COUNT(ps.id) DESC) as rn
         FROM pos_sale ps
-        WHERE ps.posnet_id = ${posnet.id}
+        WHERE ps.posnet_id = ANY(${posnetIds})
           AND ps.status = 'COMPLETED'
-        GROUP BY date_trunc('hour', ps.created_at)
-        ORDER BY transactions DESC
-        LIMIT 5
-      `;
+        GROUP BY ps.posnet_id, date_trunc('hour', ps.created_at)
+      ) ranked
+      WHERE rn <= 5
+    `;
+    const hoursMap = new Map<number, typeof hoursResult>();
+    for (const r of hoursResult) {
+      if (!hoursMap.has(r.posnet_id)) hoursMap.set(r.posnet_id, []);
+      hoursMap.get(r.posnet_id)!.push(r);
+    }
 
-      const busiestHours = busiestHoursResult.map((row) => ({
+    // Assemble breakdowns in memory
+    return posnets.map((posnet) => {
+      const totals = totalsMap.get(posnet.id);
+      const totalRevenue = Number(totals?.total_revenue ?? 0n);
+      const totalUnits = Number(totals?.total_units ?? 0n);
+      const transactionCount = Number(totals?.transaction_count ?? 0n);
+      const avgTicketSize = transactionCount > 0
+        ? Math.round(totalRevenue / transactionCount)
+        : 0;
+
+      const busiestHours = (hoursMap.get(posnet.id) || []).map((row) => ({
         hour: row.hour.toISOString(),
         transactions: Number(row.transactions),
         revenue: Number(row.revenue),
       }));
 
-      breakdowns.push({
+      return {
         posnetId: posnet.id,
         posnetCode: posnet.code,
         posnetName: posnet.name,
@@ -718,10 +736,8 @@ export class ReportsRepository {
         totalUnitsSold: totalUnits,
         avgTicketSize,
         busiestHours,
-      });
-    }
-
-    return breakdowns;
+      };
+    });
   }
 
   /**

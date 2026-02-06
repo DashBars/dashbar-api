@@ -279,10 +279,12 @@ export class EventsService {
           include: { drink: true, supplier: true },
         });
 
-        // Create stock returns for each stock item
-        for (const stock of allStock) {
-          await tx.stockReturn.create({
-            data: {
+        // Create stock returns for all stock items in bulk
+        if (allStock.length > 0) {
+          const returnStatus = returnPolicy.requireApproval ? 'pending' : 'approved';
+          const now = new Date();
+          await tx.stockReturn.createMany({
+            data: allStock.map((stock) => ({
               policyId: returnPolicy.id,
               barId: stock.barId,
               drinkId: stock.drinkId,
@@ -291,10 +293,10 @@ export class EventsService {
               unitCost: stock.unitCost,
               currency: stock.currency,
               ownershipMode: stock.ownershipMode,
-              status: returnPolicy.requireApproval ? 'pending' : 'approved',
-              requestedAt: new Date(),
+              status: returnStatus,
+              requestedAt: now,
               requestedById: ownerId,
-            },
+            })),
           });
         }
       }

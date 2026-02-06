@@ -36,10 +36,10 @@ export class CocktailsService {
   }
 
   /**
-   * Get all cocktails
+   * Get all cocktails, optionally filtered by event
    */
-  async findAll(includeInactive: boolean = false): Promise<Cocktail[]> {
-    return this.cocktailsRepository.findAll(includeInactive);
+  async findAll(includeInactive: boolean = false, eventId?: number): Promise<Cocktail[]> {
+    return this.cocktailsRepository.findAll(includeInactive, eventId);
   }
 
   /**

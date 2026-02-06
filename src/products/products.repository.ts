@@ -78,27 +78,75 @@ export class ProductsRepository {
     }) as Promise<EventProductWithCocktails[]>;
   }
 
+  /**
+   * Get products available at a specific bar.
+   * Returns bar-specific products + event-wide products filtered by bar type recipes.
+   * Event-wide products without any recipe are included (direct sale items).
+   * Event-wide products with a recipe NOT assigned to this bar type are excluded.
+   */
   async findByEventIdAndBarId(
     eventId: number,
     barId: number,
   ): Promise<EventProductWithCocktails[]> {
-    return this.prisma.eventProduct.findMany({
-      where: { eventId, barId },
-      include: {
-        cocktails: {
-          include: {
-            cocktail: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-              },
-            },
+    const include = {
+      cocktails: {
+        include: {
+          cocktail: {
+            select: { id: true, name: true, price: true },
           },
         },
       },
+    };
+
+    // Get bar type
+    const bar = await this.prisma.bar.findUnique({
+      where: { id: barId },
+      select: { type: true },
+    });
+    if (!bar) return [];
+
+    // Get recipe names allowed for this bar type
+    const recipesForBarType = await this.prisma.eventRecipe.findMany({
+      where: { eventId, barTypes: { some: { barType: bar.type as any } } },
+      select: { cocktailName: true },
+    });
+    const allowedNames = new Set(recipesForBarType.map(r => r.cocktailName.toLowerCase()));
+
+    // Get ALL recipe names in the event (to distinguish "no recipe" from "recipe for other bar type")
+    const allRecipes = await this.prisma.eventRecipe.findMany({
+      where: { eventId },
+      select: { cocktailName: true },
+    });
+    const allRecipeNames = new Set(allRecipes.map(r => r.cocktailName.toLowerCase()));
+
+    // Bar-specific products (always included)
+    const barProducts = await this.prisma.eventProduct.findMany({
+      where: { eventId, barId },
+      include,
       orderBy: { name: 'asc' },
-    }) as Promise<EventProductWithCocktails[]>;
+    }) as EventProductWithCocktails[];
+
+    // Event-wide products (barId is null)
+    const barProductNames = barProducts.map(p => p.name);
+    const eventWideProducts = await this.prisma.eventProduct.findMany({
+      where: {
+        eventId,
+        barId: null,
+        ...(barProductNames.length > 0 ? { name: { notIn: barProductNames } } : {}),
+      },
+      include,
+      orderBy: { name: 'asc' },
+    }) as EventProductWithCocktails[];
+
+    // Filter event-wide: include if no recipe exists OR recipe is for this bar type
+    const filteredEventWide = eventWideProducts.filter(p => {
+      const nameLower = p.name.toLowerCase();
+      const hasAnyRecipe = allRecipeNames.has(nameLower);
+      if (!hasAnyRecipe) return true; // direct sale item
+      return allowedNames.has(nameLower); // only if recipe assigned to this bar type
+    });
+
+    return [...barProducts, ...filteredEventWide].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async create(data: {
