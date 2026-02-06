@@ -29,6 +29,7 @@ import { ReturnPolicyModule } from './return-policy/return-policy.module';
 import { ProductsModule } from './products/products.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     ReturnPolicyModule,
     ProductsModule,
   ],
+  controllers: [AppController],
   providers: [
     {
       provide: APP_GUARD,

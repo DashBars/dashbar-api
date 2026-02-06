@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx prisma generate && tsc",
     "start": "node dist/main.js",
     "start:dev": "tsc --watch & nodemon dist/main.js",
     "test": "jest",
