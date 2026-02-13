@@ -27,6 +27,7 @@ import { ManagerInventoryModule } from './manager-inventory/manager-inventory.mo
 import { GlobalInventoryModule } from './global-inventory/global-inventory.module';
 import { ReturnPolicyModule } from './return-policy/return-policy.module';
 import { ProductsModule } from './products/products.module';
+import { AssistantModule } from './assistant/assistant.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { AppController } from './app.controller';
@@ -62,6 +63,7 @@ import { AppController } from './app.controller';
     GlobalInventoryModule,
     ReturnPolicyModule,
     ProductsModule,
+    AssistantModule,
   ],
   controllers: [AppController],
   providers: [

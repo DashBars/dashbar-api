@@ -202,6 +202,12 @@ export class EventsService {
         });
       }
 
+      // Activate all POSnets in the event (set status to OPEN)
+      await tx.posnet.updateMany({
+        where: { eventId, status: 'CLOSED', enabled: true },
+        data: { status: 'OPEN' },
+      });
+
       return updated;
     });
   }
@@ -247,6 +253,12 @@ export class EventsService {
       await tx.bar.updateMany({
         where: { eventId },
         data: { status: 'closed' },
+      });
+
+      // Close all POSnets in the event
+      await tx.posnet.updateMany({
+        where: { eventId },
+        data: { status: 'CLOSED' },
       });
 
       // Get or create return policy

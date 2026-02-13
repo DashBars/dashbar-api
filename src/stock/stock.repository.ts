@@ -51,6 +51,143 @@ export class StockRepository {
     });
   }
 
+  /**
+   * Get unique drinks available in a bar's stock, aggregated across suppliers
+   * and sellAsWholeUnit variants. Returns drink info with total ml and unit count.
+   */
+  async getUniqueDrinksByBar(
+    barId: number,
+  ): Promise<
+    {
+      drinkId: number;
+      name: string;
+      brand: string;
+      volume: number;
+      totalMl: number;
+      unitCount: number;
+    }[]
+  > {
+    // Group stock by drinkId, summing quantities
+    const grouped = await this.prisma.stock.groupBy({
+      by: ['drinkId'],
+      where: { barId, quantity: { gt: 0 } },
+      _sum: { quantity: true },
+    });
+
+    if (grouped.length === 0) return [];
+
+    // Fetch drink details for all drinkIds
+    const drinkIds = grouped.map((g) => g.drinkId);
+    const drinks = await this.prisma.drink.findMany({
+      where: { id: { in: drinkIds } },
+      select: { id: true, name: true, brand: true, volume: true },
+    });
+
+    const drinkMap = new Map(drinks.map((d) => [d.id, d]));
+
+    return grouped
+      .map((g) => {
+        const drink = drinkMap.get(g.drinkId);
+        const totalMl = g._sum.quantity || 0;
+        const volume = drink?.volume || 1;
+        return {
+          drinkId: g.drinkId,
+          name: drink?.name || `Drink ${g.drinkId}`,
+          brand: drink?.brand || '',
+          volume,
+          totalMl,
+          unitCount: Math.floor(totalMl / volume),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Get unique drinks available across all bars of a given type in an event.
+   * Only includes recipe stock (sellAsWholeUnit: false).
+   * Returns drink info + total ml + weighted average cost per ml.
+   */
+  async getUniqueDrinksByBarType(
+    eventId: number,
+    barType: string,
+  ): Promise<
+    {
+      drinkId: number;
+      name: string;
+      brand: string;
+      volume: number;
+      totalMl: number;
+      unitCount: number;
+      costPerMl: number; // weighted average cost in cents per ml
+    }[]
+  > {
+    // Find all bars of this type in the event
+    const bars = await this.prisma.bar.findMany({
+      where: { eventId, type: barType as any },
+      select: { id: true },
+    });
+
+    if (bars.length === 0) return [];
+
+    const barIds = bars.map((b) => b.id);
+
+    // Fetch all recipe stock entries with cost data
+    const stockEntries = await this.prisma.stock.findMany({
+      where: {
+        barId: { in: barIds },
+        quantity: { gt: 0 },
+        sellAsWholeUnit: false,
+      },
+      select: {
+        drinkId: true,
+        quantity: true,
+        unitCost: true,
+        drink: { select: { id: true, name: true, brand: true, volume: true } },
+      },
+    });
+
+    if (stockEntries.length === 0) return [];
+
+    // Aggregate by drinkId: sum quantity, weighted average cost
+    const aggregated = new Map<
+      number,
+      { totalMl: number; totalCost: number; drink: { id: number; name: string; brand: string; volume: number } }
+    >();
+
+    for (const entry of stockEntries) {
+      const existing = aggregated.get(entry.drinkId);
+      // unitCost is cost per unit (bottle) in cents; cost per ml = unitCost / volume
+      const drinkVolume = entry.drink.volume || 1;
+      const costForThisQuantity = (entry.unitCost / drinkVolume) * entry.quantity;
+
+      if (existing) {
+        existing.totalMl += entry.quantity;
+        existing.totalCost += costForThisQuantity;
+      } else {
+        aggregated.set(entry.drinkId, {
+          totalMl: entry.quantity,
+          totalCost: costForThisQuantity,
+          drink: entry.drink,
+        });
+      }
+    }
+
+    return Array.from(aggregated.entries())
+      .map(([drinkId, data]) => {
+        const volume = data.drink.volume || 1;
+        return {
+          drinkId,
+          name: data.drink.name || `Drink ${drinkId}`,
+          brand: data.drink.brand || '',
+          volume,
+          totalMl: data.totalMl,
+          unitCount: Math.floor(data.totalMl / volume),
+          costPerMl: data.totalMl > 0 ? data.totalCost / data.totalMl : 0,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async findByDrinkIdAndBarIds(drinkId: number, barIds: number[]): Promise<Stock[]> {
     return this.prisma.stock.findMany({
       where: {
@@ -136,13 +273,16 @@ export class StockRepository {
 
   /**
    * Get stock summary aggregated by product (across all suppliers)
+   * Quantities are in ml; unitCount shows equivalent whole units (bottles/cans)
    */
   async getStockSummaryByBar(barId: number): Promise<
     {
       drinkId: number;
       drinkName: string;
       drinkBrand: string;
+      drinkVolume: number;
       totalQuantity: number;
+      unitCount: number;
       supplierCount: number;
     }[]
   > {
@@ -157,6 +297,7 @@ export class StockRepository {
         drinkId: number;
         drinkName: string;
         drinkBrand: string;
+        drinkVolume: number;
         totalQuantity: number;
         suppliers: Set<number>;
       }
@@ -172,6 +313,7 @@ export class StockRepository {
           drinkId: stock.drinkId,
           drinkName: stock.drink.name,
           drinkBrand: stock.drink.brand,
+          drinkVolume: stock.drink.volume,
           totalQuantity: stock.quantity,
           suppliers: new Set([stock.supplierId]),
         });
@@ -182,7 +324,9 @@ export class StockRepository {
       drinkId: item.drinkId,
       drinkName: item.drinkName,
       drinkBrand: item.drinkBrand,
+      drinkVolume: item.drinkVolume,
       totalQuantity: item.totalQuantity,
+      unitCount: item.drinkVolume > 0 ? Math.floor(item.totalQuantity / item.drinkVolume) : 0,
       supplierCount: item.suppliers.size,
     }));
   }

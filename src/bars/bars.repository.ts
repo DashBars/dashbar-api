@@ -21,7 +21,11 @@ export class BarsRepository {
       where: { id },
       include: {
         stocks: { include: { drink: true } },
-        posnets: true,
+        posnets: {
+          include: {
+            bar: { select: { id: true, name: true, type: true } },
+          },
+        },
       },
     });
   }
@@ -41,7 +45,11 @@ export class BarsRepository {
       where: { id: barId, eventId },
       include: {
         stocks: { include: { drink: true } },
-        posnets: true,
+        posnets: {
+          include: {
+            bar: { select: { id: true, name: true, type: true } },
+          },
+        },
       },
     });
   }

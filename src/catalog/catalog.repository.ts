@@ -14,10 +14,14 @@ export interface CatalogProduct {
   price: number;
   isCombo: boolean;
   barId: number | null;
+  // Cocktail ID linked to this product (needed for POS sales)
+  cocktailId?: number;
   // Recipe details
   glassVolume?: number;
   hasIce?: boolean;
   components?: CatalogProductComponent[];
+  // Stock level: how many servings can be made with available stock
+  stockLevel?: number;
 }
 
 @Injectable()
@@ -206,7 +210,7 @@ export class CatalogRepository {
       allEventRecipes.map(r => r.cocktailName.toLowerCase())
     );
 
-    // Get bar-specific products first
+    // Get bar-specific products first (include cocktail link for POS)
     const barProducts = await this.prisma.eventProduct.findMany({
       where: { eventId, barId },
       select: {
@@ -215,6 +219,10 @@ export class CatalogRepository {
         price: true,
         isCombo: true,
         barId: true,
+        cocktails: {
+          select: { cocktailId: true },
+          take: 1, // For non-combo products, there's exactly one cocktail
+        },
       },
       orderBy: { name: 'asc' },
     });
@@ -235,6 +243,10 @@ export class CatalogRepository {
         price: true,
         isCombo: true,
         barId: true,
+        cocktails: {
+          select: { cocktailId: true },
+          take: 1,
+        },
       },
       orderBy: { name: 'asc' },
     });
@@ -266,14 +278,75 @@ export class CatalogRepository {
       return allowedCocktailNames.has(productNameLower);
     });
 
-    // Sort and enrich products with recipe details
+    // Get all stock for this bar (in ml) to calculate stock levels
+    // Both direct-sale and recipe stock are stored in ml, so aggregate both.
+    const barStock = await this.prisma.stock.findMany({
+      where: {
+        barId,
+        quantity: { gt: 0 },
+      },
+      select: { drinkId: true, quantity: true },
+    });
+
+    // Build a map of drinkId -> total ml available
+    const stockByDrink = new Map<number, number>();
+    for (const s of barStock) {
+      stockByDrink.set(s.drinkId, (stockByDrink.get(s.drinkId) || 0) + s.quantity);
+    }
+
+    // Collect product names that are missing a cocktailId from the join table
+    // so we can resolve them by matching cocktail name as a fallback
+    const productsMissingCocktailId = filteredProducts
+      .filter(p => !(p as any).cocktails?.[0]?.cocktailId)
+      .map(p => p.name);
+
+    // Fallback: resolve cocktailId by matching product name to Cocktail name
+    const cocktailByNameMap = new Map<string, number>();
+    if (productsMissingCocktailId.length > 0) {
+      const cocktails = await this.prisma.cocktail.findMany({
+        where: {
+          eventId,
+          isActive: true,
+          name: { in: productsMissingCocktailId, mode: 'insensitive' },
+        },
+        select: { id: true, name: true },
+      });
+      for (const c of cocktails) {
+        cocktailByNameMap.set(c.name.toLowerCase(), c.id);
+      }
+    }
+
+    // Sort and enrich products with recipe details and stock level
     return filteredProducts
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(product => {
+        // Extract cocktailId from the join table (first linked cocktail)
+        let cocktailId = (product as any).cocktails?.[0]?.cocktailId as number | undefined;
+        // Fallback: resolve by product name -> cocktail name
+        if (!cocktailId) {
+          cocktailId = cocktailByNameMap.get(product.name.toLowerCase());
+        }
+        // Remove the raw cocktails relation from the output
+        const { cocktails: _cocktails, ...productWithoutCocktails } = product as any;
+
         const recipe = recipeMap.get(product.name.toLowerCase());
         if (recipe) {
+          // Calculate stock level: min servings across all components (bottleneck)
+          let stockLevel: number | undefined;
+          if (recipe.components.length > 0) {
+            const servingsPerComponent = recipe.components.map(c => {
+              const mlPerServing = Math.ceil((recipe.glassVolume * c.percentage) / 100);
+              if (mlPerServing <= 0) return Infinity;
+              const availableMl = stockByDrink.get(c.drinkId) || 0;
+              return Math.floor(availableMl / mlPerServing);
+            });
+            stockLevel = Math.min(...servingsPerComponent);
+            if (stockLevel === Infinity) stockLevel = 0;
+          }
+
           return {
-            ...product,
+            ...productWithoutCocktails,
+            cocktailId,
             glassVolume: recipe.glassVolume,
             hasIce: recipe.hasIce,
             components: recipe.components.map(c => ({
@@ -282,9 +355,10 @@ export class CatalogRepository {
               drinkBrand: c.drink.brand,
               percentage: c.percentage,
             })),
+            stockLevel,
           };
         }
-        return product;
+        return { ...productWithoutCocktails, cocktailId };
       });
   }
 
@@ -301,6 +375,10 @@ export class CatalogRepository {
         price: true,
         isCombo: true,
         barId: true,
+        cocktails: {
+          select: { cocktailId: true },
+          take: 1,
+        },
       },
       orderBy: { name: 'asc' },
     });
@@ -330,12 +408,41 @@ export class CatalogRepository {
     // Create a map of recipe name -> recipe details
     const recipeMap = new Map(recipes.map(r => [r.cocktailName.toLowerCase(), r]));
 
-    // Enrich products with recipe details
+    // Fallback: resolve cocktailId by matching product name to Cocktail name
+    // for products that don't have a link via EventProductCocktail join table
+    const productsMissingCocktailId = products
+      .filter(p => !p.cocktails?.[0]?.cocktailId)
+      .map(p => p.name);
+
+    const cocktailByNameMap = new Map<string, number>();
+    if (productsMissingCocktailId.length > 0) {
+      const cocktails = await this.prisma.cocktail.findMany({
+        where: {
+          eventId,
+          isActive: true,
+          name: { in: productsMissingCocktailId, mode: 'insensitive' },
+        },
+        select: { id: true, name: true },
+      });
+      for (const c of cocktails) {
+        cocktailByNameMap.set(c.name.toLowerCase(), c.id);
+      }
+    }
+
+    // Enrich products with recipe details and cocktailId
     return products.map(product => {
+      let cocktailId = product.cocktails?.[0]?.cocktailId as number | undefined;
+      // Fallback: resolve by product name -> cocktail name
+      if (!cocktailId) {
+        cocktailId = cocktailByNameMap.get(product.name.toLowerCase());
+      }
+      const { cocktails: _cocktails, ...productWithoutCocktails } = product as any;
+
       const recipe = recipeMap.get(product.name.toLowerCase());
       if (recipe) {
         return {
-          ...product,
+          ...productWithoutCocktails,
+          cocktailId,
           glassVolume: recipe.glassVolume,
           hasIce: recipe.hasIce,
           components: recipe.components.map(c => ({
@@ -346,7 +453,7 @@ export class CatalogRepository {
           })),
         };
       }
-      return product;
+      return { ...productWithoutCocktails, cocktailId };
     });
   }
 }

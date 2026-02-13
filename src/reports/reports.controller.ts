@@ -8,13 +8,16 @@ import {
   Res,
   NotFoundException,
   StreamableFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { ReportsService } from './reports.service';
 import { ExportsService } from './exports.service';
+import { EmailService } from './email.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '@prisma/client';
 import { GenerateComparisonDto, GenerateReportDto } from './dto';
+import { SendReportEmailDto } from './dto/send-report-email.dto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -23,6 +26,7 @@ export class ReportsController {
   constructor(
     private readonly reportsService: ReportsService,
     private readonly exportsService: ExportsService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -134,6 +138,44 @@ export class ReportsController {
 
     const fileStream = fs.createReadStream(filePath);
     return new StreamableFile(fileStream);
+  }
+
+  // ============= EMAIL ENDPOINTS =============
+
+  /**
+   * Send report via email
+   */
+  @Post('events/:eventId/report/send-email')
+  async sendReportEmail(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Body() dto: SendReportEmailDto,
+    @CurrentUser() user: User,
+  ) {
+    if (!this.emailService.isEnabled()) {
+      throw new BadRequestException('El servicio de email no está configurado');
+    }
+
+    // Ensure PDF exists, generate if not
+    let pdfPath = await this.exportsService.getPDFPath(eventId, user.id);
+    if (!pdfPath || !fs.existsSync(pdfPath)) {
+      pdfPath = await this.exportsService.generatePDF(eventId, user.id);
+    }
+
+    // Get event name for subject
+    const report = await this.reportsService.findByEvent(eventId, user.id);
+    const eventName = report?.event?.name || `Evento #${eventId}`;
+
+    const result = await this.emailService.sendReportEmail(
+      dto.recipients,
+      eventName,
+      pdfPath,
+    );
+
+    if (!result.success) {
+      throw new BadRequestException(result.error);
+    }
+
+    return { message: `Reporte enviado a ${dto.recipients.length} destinatario(s)` };
   }
 
   // ============= COMPARISON ENDPOINTS =============

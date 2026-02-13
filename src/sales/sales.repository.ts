@@ -6,6 +6,7 @@ import {
   Stock,
   StockDepletionPolicy,
   MovementType,
+  StockMovementReason,
   Prisma,
 } from '@prisma/client';
 
@@ -76,12 +77,17 @@ export class SalesRepository {
   }
 
   /**
-   * Get stock for a drink in a bar, sorted by depletion policy
+   * Get stock for a drink in a bar, sorted by depletion policy.
+   * @param sellAsWholeUnit - when provided, restricts to the matching stock pool:
+   *   true  = "venta directa" stock only
+   *   false = "para recetas" stock only
+   *   undefined = both pools (legacy behaviour)
    */
   async getStockSortedByPolicy(
     barId: number,
     drinkId: number,
     policy: StockDepletionPolicy,
+    sellAsWholeUnit?: boolean,
   ): Promise<Stock[]> {
     let orderBy: Prisma.StockOrderByWithRelationInput[];
 
@@ -100,12 +106,19 @@ export class SalesRepository {
         orderBy = [{ unitCost: 'asc' }];
     }
 
+    const where: Prisma.StockWhereInput = {
+      barId,
+      drinkId,
+      quantity: { gt: 0 },
+    };
+
+    // Filter by stock pool when specified
+    if (sellAsWholeUnit !== undefined) {
+      where.sellAsWholeUnit = sellAsWholeUnit;
+    }
+
     return this.prisma.stock.findMany({
-      where: {
-        barId,
-        drinkId,
-        quantity: { gt: 0 },
-      },
+      where,
       orderBy,
       include: { supplier: true },
     });
@@ -123,6 +136,7 @@ export class SalesRepository {
       barId: number;
       drinkId: number;
       supplierId: number;
+      sellAsWholeUnit: boolean;
       quantityToDeduct: number;
     }>,
   ): Promise<Sale> {
@@ -141,7 +155,7 @@ export class SalesRepository {
                 barId: depletion.barId,
                 drinkId: depletion.drinkId,
                 supplierId: depletion.supplierId,
-                sellAsWholeUnit: false,
+                sellAsWholeUnit: depletion.sellAsWholeUnit,
               },
             },
             data: {
@@ -160,6 +174,8 @@ export class SalesRepository {
             supplierId: depletion.supplierId,
             quantity: -depletion.quantityToDeduct,
             type: MovementType.sale,
+            reason: StockMovementReason.SALE_DECREMENT,
+            sellAsWholeUnit: depletion.sellAsWholeUnit,
             referenceId: sale.id,
           })),
         });
@@ -209,7 +225,7 @@ export class SalesRepository {
   ): Promise<InventoryMovement[]> {
     return this.prisma.inventoryMovement.findMany({
       where: { globalInventoryId },
-      include: { drink: true, supplier: true },
+      include: { drink: true, supplier: true, bar: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'desc' },
     });
   }

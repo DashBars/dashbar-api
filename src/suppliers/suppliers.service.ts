@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { SuppliersRepository } from './suppliers.repository';
 import { CreateSupplierDto, UpdateSupplierDto } from './dto';
 import { Supplier } from '@prisma/client';
@@ -80,10 +80,17 @@ export class SuppliersService {
   }
 
   /**
-   * Delete a supplier
+   * Delete a supplier only if it has no active stock anywhere
    */
   async delete(supplierId: number, userId: number): Promise<void> {
     await this.findOne(supplierId, userId); // Ensures exists and belongs to user
+
+    const activeStock = await this.suppliersRepository.hasActiveStock(supplierId);
+    if (activeStock) {
+      throw new ConflictException(
+        'No se puede eliminar este proveedor porque tiene stock asociado en una o más barras. Eliminá o consumí el stock primero.',
+      );
+    }
 
     await this.suppliersRepository.delete(supplierId);
   }

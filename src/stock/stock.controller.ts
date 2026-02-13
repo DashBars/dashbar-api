@@ -57,6 +57,19 @@ export class StockController {
   }
 
   /**
+   * Get unique drinks available in the bar's stock (for recipe creation).
+   * Returns aggregated drink info with total ml available.
+   */
+  @Get('drinks')
+  getStockDrinks(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Param('barId', ParseIntPipe) barId: number,
+    @CurrentUser() user: User,
+  ) {
+    return this.stockService.getStockDrinks(eventId, barId, user.id);
+  }
+
+  /**
    * Get consignment stock available for return
    */
   @Get('consignment')

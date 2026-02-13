@@ -18,10 +18,14 @@ interface DrinkConsumption {
   totalMlRequired: number;
 }
 
+/** Whether the sale targets "venta directa" or "para recetas" stock pool */
+type StockPoolType = 'direct' | 'recipe';
+
 export interface StockDepletion {
   barId: number;
   drinkId: number;
   supplierId: number;
+  sellAsWholeUnit: boolean;
   quantityToDeduct: number;
 }
 
@@ -61,6 +65,13 @@ export class SalesService {
       );
     }
 
+    // Determine stock pool: direct sale = single component at 100% (whole unit)
+    // recipe = multi-component or < 100% (fractional ingredients)
+    const isDirectSale =
+      recipeResult.components.length === 1 &&
+      recipeResult.components[0].cocktailPercentage === 100;
+    const stockPool: StockPoolType = isDirectSale ? 'direct' : 'recipe';
+
     // 4. Calculate consumption per drink using glassVolume from recipe
     const consumption = this.calculateConsumption(
       recipeResult.components,
@@ -73,6 +84,7 @@ export class SalesService {
       barId,
       consumption,
       bar.event.stockDepletionPolicy,
+      stockPool,
     );
 
     // 6. Execute sale with depletions (transactional)
@@ -170,7 +182,9 @@ export class SalesService {
   }
 
   /**
-   * Plan stock depletions according to the event's policy
+   * Plan stock depletions according to the event's policy.
+   * Respects stock pools: direct sales deplete from sellAsWholeUnit=true,
+   * recipe sales deplete from sellAsWholeUnit=false.
    * @returns List of depletions to execute
    * @throws InsufficientStockException if not enough stock
    */
@@ -178,18 +192,21 @@ export class SalesService {
     barId: number,
     consumption: DrinkConsumption[],
     policy: StockDepletionPolicy,
+    stockPool: StockPoolType,
   ): Promise<StockDepletion[]> {
     const depletions: StockDepletion[] = [];
+    const targetSellAsWholeUnit = stockPool === 'direct';
 
     for (const item of consumption) {
-      // Get stock sorted by policy
+      // Get stock sorted by policy, filtered by the correct pool
       const stocks = await this.salesRepository.getStockSortedByPolicy(
         barId,
         item.drinkId,
         policy,
+        targetSellAsWholeUnit,
       );
 
-      // Calculate total available
+      // Calculate total available in the target pool
       const totalAvailable = stocks.reduce((sum, s) => sum + s.quantity, 0);
 
       if (totalAvailable < item.totalMlRequired) {
@@ -213,6 +230,7 @@ export class SalesService {
           barId,
           drinkId: item.drinkId,
           supplierId: stock.supplierId,
+          sellAsWholeUnit: stock.sellAsWholeUnit,
           quantityToDeduct: toDeduct,
         });
       }

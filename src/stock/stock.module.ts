@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { StockController } from './stock.controller';
 import { StockMovementsController } from './stock-movements.controller';
+import { EventStockController } from './event-stock.controller';
 import { StockService } from './stock.service';
 import { StockRepository } from './stock.repository';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -17,7 +18,7 @@ import { GlobalInventoryModule } from '../global-inventory/global-inventory.modu
     SuppliersModule,
     GlobalInventoryModule,
   ],
-  controllers: [StockController, StockMovementsController],
+  controllers: [StockController, StockMovementsController, EventStockController],
   providers: [StockService, StockRepository],
   exports: [StockService, StockRepository],
 })

@@ -45,7 +45,8 @@ export class DashboardRepository {
   }
 
   /**
-   * Get sales totals for an event or bar
+   * Get sales totals for an event or bar.
+   * Prefers POSSale data (has actual prices); falls back to legacy sale table.
    */
   async getSalesTotals(
     eventId: number,
@@ -53,6 +54,33 @@ export class DashboardRepository {
     from: Date | null,
     to: Date | null,
   ): Promise<{ totalAmount: number; totalUnits: number; orderCount: number }> {
+    // Try POSSale first (accurate prices stored at sale time)
+    const posResult = await this.prisma.$queryRaw<SalesTotalsResult[]>`
+      SELECT
+        COALESCE(SUM(ps.total), 0) as total_amount,
+        COALESCE(SUM(psi.quantity), 0) as total_units,
+        COUNT(DISTINCT ps.id) as order_count
+      FROM pos_sale ps
+      LEFT JOIN pos_sale_item psi ON psi.sale_id = ps.id
+      WHERE ps.event_id = ${eventId}
+        AND ps.status = 'COMPLETED'
+        ${barId !== null ? Prisma.sql`AND ps.bar_id = ${barId}` : Prisma.empty}
+        ${from !== null ? Prisma.sql`AND ps.created_at >= ${from}` : Prisma.empty}
+        ${to !== null ? Prisma.sql`AND ps.created_at <= ${to}` : Prisma.empty}
+    `;
+
+    const posRow = posResult[0] || { total_amount: 0n, total_units: 0n, order_count: 0n };
+    const hasPosData = Number(posRow.order_count) > 0;
+
+    if (hasPosData) {
+      return {
+        totalAmount: Number(posRow.total_amount),
+        totalUnits: Number(posRow.total_units),
+        orderCount: Number(posRow.order_count),
+      };
+    }
+
+    // Fallback to legacy sale table
     const result = await this.prisma.$queryRaw<SalesTotalsResult[]>`
       SELECT
         COALESCE(SUM(s.quantity * COALESCE(ep.price, c.price)), 0) as total_amount,
@@ -133,7 +161,8 @@ export class DashboardRepository {
   }
 
   /**
-   * Get time-series sales data
+   * Get time-series sales data.
+   * Prefers POSSale data; falls back to legacy sale table.
    */
   async getTimeSeriesSales(
     eventId: number,
@@ -145,6 +174,38 @@ export class DashboardRepository {
   ): Promise<Array<{ timestamp: Date; units: number; amount: number }>> {
     const interval = this.bucketToInterval(bucket);
 
+    // Try POSSale first
+    const posCheck = await this.prisma.$queryRaw<[{ cnt: bigint }]>`
+      SELECT COUNT(*)::bigint as cnt FROM pos_sale WHERE event_id = ${eventId} AND status = 'COMPLETED'
+    `;
+    const hasPosData = Number(posCheck[0]?.cnt || 0n) > 0;
+
+    if (hasPosData) {
+      const posResult = await this.prisma.$queryRaw<TimeSeriesResult[]>`
+        SELECT
+          date_trunc(${interval}, ps.created_at) as timestamp,
+          COALESCE(SUM(psi.quantity), 0) as units,
+          COALESCE(SUM(psi.line_total), 0) as amount
+        FROM pos_sale ps
+        JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.event_id = ${eventId}
+          AND ps.status = 'COMPLETED'
+          AND ps.created_at >= ${from}
+          AND ps.created_at <= ${to}
+          ${barId !== null ? Prisma.sql`AND ps.bar_id = ${barId}` : Prisma.empty}
+          ${cocktailId !== null ? Prisma.sql`AND psi.cocktail_id = ${cocktailId}` : Prisma.empty}
+        GROUP BY date_trunc(${interval}, ps.created_at)
+        ORDER BY timestamp ASC
+      `;
+
+      return posResult.map((row) => ({
+        timestamp: row.timestamp,
+        units: Number(row.units),
+        amount: Number(row.amount),
+      }));
+    }
+
+    // Fallback to legacy sale table
     const result = await this.prisma.$queryRaw<TimeSeriesResult[]>`
       SELECT
         date_trunc(${interval}, s.created_at) as timestamp,
@@ -206,7 +267,8 @@ export class DashboardRepository {
   }
 
   /**
-   * Get top products by units sold
+   * Get top products by units sold.
+   * Prefers POSSale data; falls back to legacy sale table.
    */
   async getTopProducts(
     eventId: number,
@@ -215,6 +277,40 @@ export class DashboardRepository {
     from: Date | null,
     to: Date | null,
   ): Promise<Array<{ cocktailId: number; name: string; units: number; amount: number }>> {
+    // Try POSSale first
+    const posCheck = await this.prisma.$queryRaw<[{ cnt: bigint }]>`
+      SELECT COUNT(*)::bigint as cnt FROM pos_sale WHERE event_id = ${eventId} AND status = 'COMPLETED'
+    `;
+    const hasPosData = Number(posCheck[0]?.cnt || 0n) > 0;
+
+    if (hasPosData) {
+      const posResult = await this.prisma.$queryRaw<TopProductResult[]>`
+        SELECT
+          COALESCE(psi.product_id, 0) as cocktail_id,
+          psi.product_name_snapshot as name,
+          SUM(psi.quantity) as units,
+          SUM(psi.line_total) as amount
+        FROM pos_sale ps
+        JOIN pos_sale_item psi ON psi.sale_id = ps.id
+        WHERE ps.event_id = ${eventId}
+          AND ps.status = 'COMPLETED'
+          ${barId !== null ? Prisma.sql`AND ps.bar_id = ${barId}` : Prisma.empty}
+          ${from !== null ? Prisma.sql`AND ps.created_at >= ${from}` : Prisma.empty}
+          ${to !== null ? Prisma.sql`AND ps.created_at <= ${to}` : Prisma.empty}
+        GROUP BY psi.product_id, psi.product_name_snapshot
+        ORDER BY units DESC
+        LIMIT ${limit}
+      `;
+
+      return posResult.map((row) => ({
+        cocktailId: Number(row.cocktail_id),
+        name: row.name,
+        units: Number(row.units),
+        amount: Number(row.amount),
+      }));
+    }
+
+    // Fallback to legacy sale table
     const result = await this.prisma.$queryRaw<TopProductResult[]>`
       SELECT
         c.id as cocktail_id,
@@ -243,7 +339,8 @@ export class DashboardRepository {
   }
 
   /**
-   * Get cocktail by ID with price for an event
+   * Get cocktail by ID with price for an event.
+   * Resolution order: EventProduct price -> EventPrice -> Cocktail.price
    */
   async getCocktailWithPrice(cocktailId: number, eventId: number) {
     const cocktail = await this.prisma.cocktail.findUnique({
@@ -252,8 +349,24 @@ export class DashboardRepository {
 
     if (!cocktail) return null;
 
-    // Use findFirst for event-level prices (barId = null)
-    // The actual unique constraint is on (eventId, cocktailId, barId)
+    // 1. Try EventProduct price (via EventProductCocktail)
+    const productCocktail = await this.prisma.eventProductCocktail.findFirst({
+      where: { cocktailId },
+      include: {
+        eventProduct: {
+          select: { price: true, eventId: true, barId: true },
+        },
+      },
+    });
+
+    if (productCocktail?.eventProduct?.eventId === eventId && productCocktail.eventProduct.barId === null) {
+      return {
+        ...cocktail,
+        resolvedPrice: productCocktail.eventProduct.price,
+      };
+    }
+
+    // 2. Try EventPrice
     const eventPrice = await this.prisma.eventPrice.findFirst({
       where: { eventId, cocktailId, barId: null },
     });

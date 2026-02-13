@@ -1,6 +1,6 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { StockService } from './stock.service';
-import { AssignStockDto, MoveStockDto, ReturnStockDto } from './dto';
+import { AssignStockDto, MoveStockDto, ReturnStockDto, BulkReturnStockDto } from './dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { User, UserRole } from '@prisma/client';
@@ -34,5 +34,25 @@ export class StockMovementsController {
   @Roles(UserRole.manager, UserRole.admin)
   returnStock(@CurrentUser() user: User, @Body() dto: ReturnStockDto) {
     return this.stockService.returnStock(user.id, dto);
+  }
+
+  /**
+   * Return consignment stock from bar to supplier
+   * (decrements both totalQuantity and allocatedQuantity in global inventory)
+   */
+  @Post('return-to-supplier')
+  @Roles(UserRole.manager, UserRole.admin)
+  returnToSupplier(@CurrentUser() user: User, @Body() dto: ReturnStockDto) {
+    return this.stockService.returnToSupplier(user.id, dto);
+  }
+
+  /**
+   * Bulk return stock from a bar.
+   * Modes: to_global, to_supplier, auto (purchased→global, consignment→supplier)
+   */
+  @Post('bulk-return')
+  @Roles(UserRole.manager, UserRole.admin)
+  bulkReturnStock(@CurrentUser() user: User, @Body() dto: BulkReturnStockDto) {
+    return this.stockService.bulkReturnStock(user.id, dto);
   }
 }

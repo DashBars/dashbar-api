@@ -287,6 +287,20 @@ export class POSSalesService {
       });
     }
 
+    // Add products with cocktailId (from EventProduct -> EventProductCocktail)
+    // This ensures direct-sale items and any product not in categories/uncategorized
+    // are also available for price resolution
+    if (catalog.products) {
+      for (const product of catalog.products) {
+        if (product.cocktailId && !priceMap.has(product.cocktailId)) {
+          priceMap.set(product.cocktailId, {
+            name: product.name,
+            price: product.price,
+          });
+        }
+      }
+    }
+
     return priceMap;
   }
 }

@@ -36,6 +36,13 @@ export class SuppliersRepository {
     });
   }
 
+  async hasActiveStock(supplierId: number): Promise<boolean> {
+    const count = await this.prisma.stock.count({
+      where: { supplierId, quantity: { gt: 0 } },
+    });
+    return count > 0;
+  }
+
   async delete(id: number): Promise<void> {
     await this.prisma.supplier.delete({
       where: { id },
