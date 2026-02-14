@@ -379,4 +379,24 @@ export class RecipesRepository {
       where: { id: drinkId },
     });
   }
+
+  /**
+   * Update salePrice on all direct-sale Stock records for a given drink name within an event.
+   * Used when a direct-sale recipe price is updated to keep Stock.salePrice in sync.
+   */
+  async updateDirectSaleStockPrices(
+    eventId: number,
+    drinkName: string,
+    newPrice: number,
+  ): Promise<number> {
+    const result = await this.prisma.stock.updateMany({
+      where: {
+        sellAsWholeUnit: true,
+        bar: { eventId },
+        drink: { name: { equals: drinkName, mode: 'insensitive' } },
+      },
+      data: { salePrice: newPrice },
+    });
+    return result.count;
+  }
 }

@@ -410,6 +410,35 @@ export class StockService {
       // user's intent (true = direct sale, false = recipe ingredient) for
       // UI categorisation. The depletion pipeline queries both types.
       const isDirectSale = !!(dto.sellAsWholeUnit && dto.salePrice);
+
+      // ── Determine canonical price BEFORE stock upsert ──
+      // For direct sale: resolve the canonical price first so Stock, EventRecipe,
+      // EventProduct, etc. all stay in sync from the start.
+      // Same product = same price always. If a recipe already exists with a price,
+      // that price is the canonical one. Price changes go through recipe management.
+      let canonicalPrice: number | null = null;
+      let existingRecipe: { id: number; salePrice: number } | null = null;
+
+      if (isDirectSale) {
+        existingRecipe = await tx.eventRecipe.findFirst({
+          where: {
+            eventId: dto.eventId,
+            cocktailName: drink.name,
+          },
+          select: { id: true, salePrice: true },
+        });
+
+        if (existingRecipe && existingRecipe.salePrice > 0) {
+          // Always use existing recipe price — same product = same price
+          canonicalPrice = existingRecipe.salePrice;
+        } else {
+          // First time assigning this product — use DTO price
+          canonicalPrice = dto.salePrice!;
+        }
+      }
+
+      // ── Stock upsert ──
+      // Uses canonicalPrice (resolved above) so create AND update stay in sync.
       const stock = await tx.stock.upsert({
         where: {
           barId_drinkId_supplierId_sellAsWholeUnit: {
@@ -428,10 +457,12 @@ export class StockService {
           currency: globalInv.currency,
           ownershipMode: globalInv.ownershipMode,
           sellAsWholeUnit: isDirectSale,
-          salePrice: isDirectSale ? dto.salePrice : null,
+          salePrice: canonicalPrice,
         },
         update: {
           quantity: { increment: quantityInMl },
+          // Always sync salePrice on update so it matches the canonical price
+          ...(canonicalPrice !== null ? { salePrice: canonicalPrice } : {}),
         },
         include: { drink: true, supplier: true },
       });
@@ -458,10 +489,11 @@ export class StockService {
         },
       });
 
-      // If sellAsWholeUnit is true, create product + auto-recipe for direct sale
-      // This makes direct-sale items go through the same recipe-based depletion pipeline
+      // ── Direct sale: create product + auto-recipe ──
+      // This makes direct-sale items go through the same recipe-based depletion pipeline.
+      // canonicalPrice and existingRecipe were already resolved above.
       let eventProduct = null;
-      if (dto.sellAsWholeUnit && dto.salePrice) {
+      if (isDirectSale && canonicalPrice !== null) {
         // Find or create Cocktail entry for the drink
         let cocktail = await tx.cocktail.findFirst({
           where: { name: drink.name, eventId: dto.eventId },
@@ -479,14 +511,14 @@ export class StockService {
             data: {
               name: drink.name,
               eventId: dto.eventId,
-              price: dto.salePrice,
+              price: canonicalPrice,
               volume: drink.volume,
               isActive: true,
             },
           });
         }
 
-        // Create or update EventProduct for this bar
+        // Create or update EventProduct for this bar using the canonical price
         const productName = drink.name;
 
         eventProduct = await tx.eventProduct.upsert({
@@ -501,11 +533,11 @@ export class StockService {
             eventId: dto.eventId,
             barId: dto.barId,
             name: productName,
-            price: dto.salePrice,
+            price: canonicalPrice,
             isCombo: false,
           },
           update: {
-            price: dto.salePrice,
+            price: canonicalPrice,
           },
         });
 
@@ -526,13 +558,6 @@ export class StockService {
 
         // Auto-create EventRecipe with 100% of this drink (implicit recipe)
         // This allows the depletion pipeline to resolve a recipe for direct-sale items
-        const existingRecipe = await tx.eventRecipe.findFirst({
-          where: {
-            eventId: dto.eventId,
-            cocktailName: drink.name,
-          },
-        });
-
         if (!existingRecipe) {
           const recipe = await tx.eventRecipe.create({
             data: {
@@ -540,7 +565,7 @@ export class StockService {
               cocktailName: drink.name,
               glassVolume: drink.volume, // 1 sale = 1 full unit (bottle/can)
               hasIce: false,
-              salePrice: dto.salePrice,
+              salePrice: canonicalPrice,
               components: {
                 create: {
                   drinkId: drink.id,

@@ -296,6 +296,17 @@ export class RecipesService {
       }
     }
 
+    // For direct-sale recipes, also propagate the new price to Stock.salePrice
+    const isDirectSale =
+      updated.components.length === 1 && updated.components[0].percentage === 100;
+    if (isDirectSale && salePrice > 0) {
+      await this.recipesRepository.updateDirectSaleStockPrices(
+        eventId,
+        effectiveName,
+        salePrice,
+      );
+    }
+
     return updated;
   }
 
