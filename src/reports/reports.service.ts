@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { ReportsRepository } from './reports.repository';
 import { EventsService } from '../events/events.service';
 import { NotOwnerException } from '../common/exceptions';
@@ -35,10 +37,29 @@ export interface GenerateReportOptions {
 
 @Injectable()
 export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
   constructor(
     private readonly repository: ReportsRepository,
     private readonly eventsService: EventsService,
   ) {}
+
+  /**
+   * Auto-generate report when an event finishes
+   */
+  @OnEvent('event.finished')
+  async handleEventFinished(payload: { eventId: number; ownerId: number }): Promise<void> {
+    try {
+      this.logger.log(`Auto-generating report for event ${payload.eventId}`);
+      await this.generateReport(payload.eventId, payload.ownerId);
+      this.logger.log(`Report auto-generated for event ${payload.eventId}`);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to auto-generate report for event ${payload.eventId}: ${error?.message}`,
+        error?.stack,
+      );
+    }
+  }
 
   /**
    * Generate a report for an event

@@ -66,8 +66,11 @@ export class EventsController {
 
   @Post(':id/finish')
   @Roles(UserRole.manager, UserRole.admin)
-  finishEvent(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
-    return this.eventsService.finishEvent(id, user.id);
+  async finishEvent(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
+    const result = await this.eventsService.finishEvent(id, user.id);
+    // Fire-and-forget: trigger report generation asynchronously
+    this.eventsService.onEventFinished(id, user.id).catch(() => {});
+    return result;
   }
 
   @Post(':id/archive')

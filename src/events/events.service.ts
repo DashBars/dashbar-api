@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EventsRepository } from './events.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto, UpdateEventDto } from './dto';
@@ -7,9 +8,12 @@ import { Event, EventStatus } from '@prisma/client';
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     private readonly eventsRepository: EventsRepository,
     private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async findById(eventId: number): Promise<Event> {
@@ -315,6 +319,14 @@ export class EventsService {
 
       return updatedEvent;
     });
+  }
+
+  /**
+   * Called after finishEvent transaction completes — triggers async side effects
+   */
+  async onEventFinished(eventId: number, ownerId: number): Promise<void> {
+    this.logger.log(`Event ${eventId} finished — emitting event.finished`);
+    this.eventEmitter.emit('event.finished', { eventId, ownerId });
   }
 
   /**

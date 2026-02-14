@@ -14,6 +14,7 @@ import { Response } from 'express';
 import { ReportsService } from './reports.service';
 import { ExportsService } from './exports.service';
 import { EmailService } from './email.service';
+import { EventsService } from '../events/events.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '@prisma/client';
 import { GenerateComparisonDto, GenerateReportDto } from './dto';
@@ -27,6 +28,7 @@ export class ReportsController {
     private readonly reportsService: ReportsService,
     private readonly exportsService: ExportsService,
     private readonly emailService: EmailService,
+    private readonly eventsService: EventsService,
   ) {}
 
   /**
@@ -162,8 +164,8 @@ export class ReportsController {
     }
 
     // Get event name for subject
-    const report = await this.reportsService.findByEvent(eventId, user.id);
-    const eventName = report?.event?.name || `Evento #${eventId}`;
+    const event = await this.eventsService.findById(eventId);
+    const eventName = event?.name || `Evento #${eventId}`;
 
     const result = await this.emailService.sendReportEmail(
       dto.recipients,
