@@ -68,11 +68,14 @@ export class SalesRepository {
   }
 
   /**
-   * Get cocktail by name
+   * Get cocktail by name, scoped to event
    */
-  async getCocktailByName(cocktailName: string) {
+  async getCocktailByName(cocktailName: string, eventId?: number) {
     return this.prisma.cocktail.findFirst({
-      where: { name: cocktailName },
+      where: {
+        name: cocktailName,
+        ...(eventId !== undefined ? { eventId } : {}),
+      },
     });
   }
 

@@ -122,9 +122,8 @@ export class SalesService {
     eventId: number,
     cocktailName: string,
   ): Promise<{ components: RecipeComponent[]; glassVolume: number }> {
-    // First, check for bar-specific overrides
-    // Note: BarRecipeOverride still uses cocktailId, so we need to find cocktail by name first
-    const cocktail = await this.salesRepository.getCocktailByName(cocktailName);
+    // First, check for bar-specific overrides (scoped to event)
+    const cocktail = await this.salesRepository.getCocktailByName(cocktailName, eventId);
     if (cocktail) {
       const overrides = await this.salesRepository.getBarRecipeOverrides(barId, cocktail.id);
 
@@ -148,8 +147,14 @@ export class SalesService {
       return { components: [], glassVolume: cocktail?.volume || 200 };
     }
 
-    // Use the first recipe found (should be unique per event + cocktailName)
-    const recipe = eventRecipes[0];
+    // When multiple recipes exist with the same name (e.g., a direct-sale product and
+    // a multi-component cocktail), prefer the direct-sale recipe (1 component at 100%)
+    // so that the depletion pipeline uses the correct stock pool (sellAsWholeUnit=true).
+    // If no direct-sale recipe exists, use the first result (cocktail recipe).
+    const directSaleRecipe = eventRecipes.find(
+      (r) => r.components.length === 1 && r.components[0].percentage === 100,
+    );
+    const recipe = directSaleRecipe || eventRecipes[0];
 
     return {
       components: recipe.components.map((c) => ({

@@ -1,6 +1,6 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { StockService } from './stock.service';
-import { AssignStockDto, MoveStockDto, ReturnStockDto, BulkReturnStockDto } from './dto';
+import { AssignStockDto, MoveStockDto, ReturnStockDto, BulkReturnStockDto, DiscardStockDto, BulkDiscardStockDto } from './dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { User, UserRole } from '@prisma/client';
@@ -54,5 +54,24 @@ export class StockMovementsController {
   @Roles(UserRole.manager, UserRole.admin)
   bulkReturnStock(@CurrentUser() user: User, @Body() dto: BulkReturnStockDto) {
     return this.stockService.bulkReturnStock(user.id, dto);
+  }
+
+  /**
+   * Discard a partial stock remainder (less than 1 full unit).
+   * Zeros out the stock and logs an adjustment movement.
+   */
+  @Post('discard')
+  @Roles(UserRole.manager, UserRole.admin)
+  discardStock(@CurrentUser() user: User, @Body() dto: DiscardStockDto) {
+    return this.stockService.discardStock(user.id, dto);
+  }
+
+  /**
+   * Bulk discard partial stock remainders.
+   */
+  @Post('bulk-discard')
+  @Roles(UserRole.manager, UserRole.admin)
+  bulkDiscardStock(@CurrentUser() user: User, @Body() dto: BulkDiscardStockDto) {
+    return this.stockService.bulkDiscardStock(user.id, dto);
   }
 }

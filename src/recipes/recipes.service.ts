@@ -85,8 +85,12 @@ export class RecipesService {
     const normalizedName = dto.cocktailName.trim();
     const requestedBarTypes = dto.barTypes ?? [];
     
-    // Find recipes with the same name
-    const sameNameRecipes = existing.filter((r) => r.cocktailName === normalizedName);
+    // Find real recipes with the same name (exclude direct-sale "recipes" — single component at 100%)
+    const isDirectSale = (r: EventRecipeWithRelations) =>
+      r.components.length === 1 && r.components[0].percentage === 100;
+    const sameNameRecipes = existing.filter(
+      (r) => r.cocktailName === normalizedName && !isDirectSale(r),
+    );
     
     // Helper to check if two recipes have identical configuration
     const areRecipesIdentical = (
@@ -247,9 +251,11 @@ export class RecipesService {
       const normalizedName = dto.cocktailName?.trim() ?? currentRecipe.cocktailName;
       const requestedBarTypes = dto.barTypes ?? currentRecipe.barTypes; // Already BarType[] from repository mapping
       
-      // Find recipes with the same name (excluding current recipe)
+      // Find real recipes with the same name (excluding current recipe and direct-sale "recipes")
+      const isDirectSaleRecipe = (r: EventRecipeWithRelations) =>
+        r.components.length === 1 && r.components[0].percentage === 100;
       const sameNameRecipes = existing.filter(
-        (r) => r.cocktailName === normalizedName && r.id !== recipeId
+        (r) => r.cocktailName === normalizedName && r.id !== recipeId && !isDirectSaleRecipe(r),
       );
       
       // Check for overlapping bar types

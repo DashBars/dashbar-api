@@ -661,11 +661,11 @@ model EventReport {
   generatedAt DateTime @default(now()) @map("generated_at")
 
   // Summary totals
-  totalRevenue    Int @map("total_revenue") // cents
-  totalCOGS       Int @map("total_cogs") // cents
-  grossProfit     Int @map("gross_profit") // cents
-  totalUnitsSold  Int @map("total_units_sold")
-  totalOrderCount Int @map("total_order_count")
+  totalRevenue    BigInt @map("total_revenue") // cents
+  totalCOGS       BigInt @map("total_cogs") // cents
+  grossProfit     BigInt @map("gross_profit") // cents
+  totalUnitsSold  Int    @map("total_units_sold")
+  totalOrderCount Int    @map("total_order_count")
 
   // Detailed data (JSON)
   topProducts        Json @map("top_products") // Array of top sellers

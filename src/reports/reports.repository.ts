@@ -47,6 +47,7 @@ interface RemainingStockResult {
 interface ConsumptionResult {
   drink_id: number;
   drink_name: string;
+  drink_volume: number;
   supplier_id: number;
   supplier_name: string;
   total_ml: bigint;
@@ -227,12 +228,13 @@ export class ReportsRepository {
    * Get remaining stock with valuation for all bars in an event
    */
   async getRemainingStock(eventId: number): Promise<RemainingStockEntry[]> {
-    const result = await this.prisma.$queryRaw<RemainingStockResult[]>`
+    const result = await this.prisma.$queryRaw<(RemainingStockResult & { drink_volume: number })[]>`
       SELECT
         s.bar_id,
         b.name as bar_name,
         s.drink_id,
         d.name as drink_name,
+        d.volume as drink_volume,
         s.supplier_id,
         sup.name as supplier_name,
         s.quantity,
@@ -247,18 +249,23 @@ export class ReportsRepository {
       ORDER BY b.name, d.name, sup.name
     `;
 
-    return result.map((row) => ({
-      barId: row.bar_id,
-      barName: row.bar_name,
-      drinkId: row.drink_id,
-      drinkName: row.drink_name,
-      supplierId: row.supplier_id,
-      supplierName: row.supplier_name,
-      quantity: row.quantity,
-      unitCost: row.unit_cost,
-      totalValue: row.quantity * row.unit_cost,
-      ownershipMode: row.ownership_mode as 'purchased' | 'consignment',
-    }));
+    return result.map((row) => {
+      const drinkVolume = row.drink_volume || 1;
+      // totalValue = (quantity in ml / ml per unit) * cost per unit
+      const totalValue = Math.round((row.quantity / drinkVolume) * row.unit_cost);
+      return {
+        barId: row.bar_id,
+        barName: row.bar_name,
+        drinkId: row.drink_id,
+        drinkName: row.drink_name,
+        supplierId: row.supplier_id,
+        supplierName: row.supplier_name,
+        quantity: row.quantity,
+        unitCost: row.unit_cost,
+        totalValue,
+        ownershipMode: row.ownership_mode as 'purchased' | 'consignment',
+      };
+    });
   }
 
   /**
@@ -270,6 +277,7 @@ export class ReportsRepository {
       SELECT
         im.drink_id,
         d.name as drink_name,
+        d.volume as drink_volume,
         im.supplier_id,
         sup.name as supplier_name,
         ABS(SUM(im.quantity)) as total_ml,
@@ -284,7 +292,7 @@ export class ReportsRepository {
         AND s.supplier_id = im.supplier_id
       WHERE b."eventId" = ${eventId}
         AND im.type = 'sale'
-      GROUP BY im.drink_id, d.name, im.supplier_id, sup.name, s.unit_cost, s.ownership_mode
+      GROUP BY im.drink_id, d.name, d.volume, im.supplier_id, sup.name, s.unit_cost, s.ownership_mode
       ORDER BY d.name, sup.name
     `;
 
@@ -294,8 +302,10 @@ export class ReportsRepository {
     for (const row of result) {
       const drinkId = row.drink_id;
       const unitCost = row.unit_cost ?? 0;
+      const drinkVolume = row.drink_volume || 1; // ml per unit (bottle)
       const totalMl = Number(row.total_ml);
-      const cost = totalMl * unitCost;
+      // Cost = (consumed ml / ml per unit) * cost per unit
+      const cost = Math.round((totalMl / drinkVolume) * unitCost);
 
       const supplierEntry: ConsumptionBySupplier = {
         supplierId: row.supplier_id,
@@ -538,14 +548,21 @@ export class ReportsRepository {
     const totalsMap = new Map(totalsResult.map(r => [r.bar_id, r]));
 
     // 2. COGS per bar (single query)
+    // Cost = (consumed_ml / drink_volume) * unit_cost  (unit_cost is cost per physical unit/bottle)
     const cogsResult = await this.prisma.$queryRaw<
       Array<{ bar_id: number; total_cogs: bigint }>
     >`
       SELECT
         im.bar_id,
-        COALESCE(SUM(ABS(im.quantity) * s.unit_cost), 0) as total_cogs
+        COALESCE(SUM(
+          CASE WHEN d.volume > 0
+            THEN ROUND(ABS(im.quantity)::numeric * s.unit_cost::numeric / d.volume::numeric)
+            ELSE ABS(im.quantity)::numeric * s.unit_cost::numeric
+          END
+        ), 0)::bigint as total_cogs
       FROM inventory_movement im
-      JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id AND s.sell_as_whole_unit = false
+      JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id
+      JOIN "Drink" d ON d.id = im.drink_id
       WHERE im.bar_id = ANY(${barIds})
         AND im.type = 'sale'
       GROUP BY im.bar_id
@@ -750,6 +767,7 @@ export class ReportsRepository {
         bar_name: string;
         drink_id: number;
         drink_name: string;
+        drink_volume: number;
         quantity: number;
         unit_cost: number;
         ownership_mode: string;
@@ -760,6 +778,7 @@ export class ReportsRepository {
         b.name as bar_name,
         d.id as drink_id,
         d.name as drink_name,
+        d.volume as drink_volume,
         s.quantity,
         s.unit_cost,
         s.ownership_mode
@@ -775,7 +794,9 @@ export class ReportsRepository {
     const barMap = new Map<number, BarStockValuation>();
 
     for (const row of result) {
-      const value = row.quantity * row.unit_cost;
+      const drinkVolume = row.drink_volume || 1;
+      // value = (quantity in ml / ml per unit) * cost per unit
+      const value = Math.round((row.quantity / drinkVolume) * row.unit_cost);
       const item = {
         drinkId: row.drink_id,
         drinkName: row.drink_name,
@@ -829,6 +850,7 @@ export class ReportsRepository {
         bar_name: string;
         drink_id: number;
         drink_name: string;
+        drink_volume: number;
         quantity_used: bigint;
         unit_cost: number;
       }>
@@ -838,6 +860,7 @@ export class ReportsRepository {
         b.name as bar_name,
         d.id as drink_id,
         d.name as drink_name,
+        d.volume as drink_volume,
         ABS(SUM(im.quantity)) as quantity_used,
         COALESCE(s.unit_cost, 0) as unit_cost
       FROM inventory_movement im
@@ -846,7 +869,7 @@ export class ReportsRepository {
       LEFT JOIN "Stock" s ON s.bar_id = im.bar_id AND s.drink_id = im.drink_id AND s.supplier_id = im.supplier_id
       WHERE b."eventId" = ${eventId}
         AND im.type = 'sale'
-      GROUP BY b.id, b.name, d.id, d.name, s.unit_cost
+      GROUP BY b.id, b.name, d.id, d.name, d.volume, s.unit_cost
       ORDER BY b.name, d.name
     `;
 
@@ -855,7 +878,9 @@ export class ReportsRepository {
 
     for (const row of result) {
       const quantityUsed = Number(row.quantity_used);
-      const cost = quantityUsed * row.unit_cost;
+      const drinkVolume = row.drink_volume || 1;
+      // cost = (consumed ml / ml per unit) * cost per unit
+      const cost = Math.round((quantityUsed / drinkVolume) * row.unit_cost);
       const drinkEntry = {
         drinkId: row.drink_id,
         drinkName: row.drink_name,

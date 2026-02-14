@@ -482,9 +482,9 @@ async function getEventReport(prisma: PrismaService, userId: number, eventId: nu
   return JSON.stringify(
     {
       generatedAt: report.generatedAt,
-      totalRevenue: report.totalRevenue / 100,
-      totalCOGS: report.totalCOGS / 100,
-      grossProfit: report.grossProfit / 100,
+      totalRevenue: Number(report.totalRevenue) / 100,
+      totalCOGS: Number(report.totalCOGS) / 100,
+      grossProfit: Number(report.grossProfit) / 100,
       totalUnitsSold: report.totalUnitsSold,
       totalOrderCount: report.totalOrderCount,
       peakHours: report.peakHours,

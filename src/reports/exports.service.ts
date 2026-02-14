@@ -75,13 +75,13 @@ export class ExportsService {
       ['Métrica', 'Valor'],
       ['Evento', event.name],
       ['Fecha de generación', report.generatedAt.toISOString()],
-      ['Ingresos totales', this.formatCurrency(report.totalRevenue)],
-      ['Costo de ventas (COGS)', this.formatCurrency(report.totalCOGS)],
-      ['Ganancia bruta', this.formatCurrency(report.grossProfit)],
-      ['Margen (%)', `${this.calculateMargin(report.totalRevenue, report.grossProfit)}%`],
+      ['Ingresos totales', this.formatCurrency(Number(report.totalRevenue))],
+      ['Costo de ventas (COGS)', this.formatCurrency(Number(report.totalCOGS))],
+      ['Ganancia bruta', this.formatCurrency(Number(report.grossProfit))],
+      ['Margen (%)', `${this.calculateMargin(Number(report.totalRevenue), Number(report.grossProfit))}%`],
       ['Unidades vendidas', report.totalUnitsSold.toString()],
       ['Cantidad de órdenes', report.totalOrderCount.toString()],
-      ['Ticket promedio', this.formatCurrency(report.totalOrderCount > 0 ? Math.round(report.totalRevenue / report.totalOrderCount) : 0)],
+      ['Ticket promedio', this.formatCurrency(report.totalOrderCount > 0 ? Math.round(Number(report.totalRevenue) / report.totalOrderCount) : 0)],
     ]));
 
     // Section 2: Top Products
@@ -227,9 +227,9 @@ export class ExportsService {
     const posBreakdowns = (report.posBreakdowns as unknown as PosBreakdown[]) || [];
     const stockValuation = report.stockValuation as unknown as StockValuationSummary;
 
-    const marginPercent = this.calculateMargin(report.totalRevenue, report.grossProfit);
+    const marginPercent = this.calculateMargin(Number(report.totalRevenue), Number(report.grossProfit));
     const avgTicket = report.totalOrderCount > 0 
-      ? Math.round(report.totalRevenue / report.totalOrderCount) 
+      ? Math.round(Number(report.totalRevenue) / report.totalOrderCount) 
       : 0;
 
     // Build PDF document
@@ -253,9 +253,9 @@ export class ExportsService {
                 { text: 'Margen', style: 'tableHeader' },
               ],
               [
-                this.formatCurrency(report.totalRevenue),
-                this.formatCurrency(report.totalCOGS),
-                this.formatCurrency(report.grossProfit),
+                this.formatCurrency(Number(report.totalRevenue)),
+                this.formatCurrency(Number(report.totalCOGS)),
+                this.formatCurrency(Number(report.grossProfit)),
                 `${marginPercent}%`,
               ],
             ],

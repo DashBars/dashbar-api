@@ -4,7 +4,6 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
 import { ReportsRepository } from './reports.repository';
 import { EventsService } from '../events/events.service';
 import { NotOwnerException } from '../common/exceptions';
@@ -44,22 +43,7 @@ export class ReportsService {
     private readonly eventsService: EventsService,
   ) {}
 
-  /**
-   * Auto-generate report when an event finishes
-   */
-  @OnEvent('event.finished')
-  async handleEventFinished(payload: { eventId: number; ownerId: number }): Promise<void> {
-    try {
-      this.logger.log(`Auto-generating report for event ${payload.eventId}`);
-      await this.generateReport(payload.eventId, payload.ownerId);
-      this.logger.log(`Report auto-generated for event ${payload.eventId}`);
-    } catch (error: any) {
-      this.logger.error(
-        `Failed to auto-generate report for event ${payload.eventId}: ${error?.message}`,
-        error?.stack,
-      );
-    }
-  }
+  // Report generation is manual-only via the "Generar reporte" button.
 
   /**
    * Generate a report for an event
@@ -70,7 +54,7 @@ export class ReportsService {
     eventId: number,
     userId: number,
     options?: GenerateReportOptions,
-  ): Promise<EventReport> {
+  ) {
     // 1. Validate event exists and user is owner
     const event = await this.repository.getEventWithOwner(eventId);
     if (!event) {
@@ -201,7 +185,13 @@ export class ReportsService {
       warnings,
     });
 
-    return report;
+    // Convert BigInt fields to Number for JSON serialization
+    return {
+      ...report,
+      totalRevenue: Number(report.totalRevenue),
+      totalCOGS: Number(report.totalCOGS),
+      grossProfit: Number(report.grossProfit),
+    };
   }
 
   /**
@@ -220,22 +210,26 @@ export class ReportsService {
       throw new NotFoundException(`Report for event ${eventId} not found. Generate it first.`);
     }
 
-    // Transform to ReportData
+    // Transform to ReportData (BigInt → Number for JSON serialization)
+    const totalRevenue = Number(report.totalRevenue);
+    const totalCOGS = Number(report.totalCOGS);
+    const grossProfit = Number(report.grossProfit);
+
     const marginPercent =
-      report.totalRevenue > 0
-        ? Math.round((report.grossProfit / report.totalRevenue) * 10000) / 100
+      totalRevenue > 0
+        ? Math.round((grossProfit / totalRevenue) * 10000) / 100
         : 0;
 
     const avgTicketSize =
       report.totalOrderCount > 0
-        ? Math.round(report.totalRevenue / report.totalOrderCount)
+        ? Math.round(totalRevenue / report.totalOrderCount)
         : 0;
 
     return {
       summary: {
-        totalRevenue: report.totalRevenue,
-        totalCOGS: report.totalCOGS,
-        grossProfit: report.grossProfit,
+        totalRevenue,
+        totalCOGS,
+        grossProfit,
         marginPercent,
         totalUnitsSold: report.totalUnitsSold,
         totalOrderCount: report.totalOrderCount,
@@ -282,8 +276,14 @@ export class ReportsService {
   /**
    * List all reports for the authenticated user's events
    */
-  async findAllByOwner(userId: number): Promise<EventReport[]> {
-    return this.repository.findByOwnerId(userId);
+  async findAllByOwner(userId: number) {
+    const reports = await this.repository.findByOwnerId(userId);
+    return reports.map((r) => ({
+      ...r,
+      totalRevenue: Number(r.totalRevenue),
+      totalCOGS: Number(r.totalCOGS),
+      grossProfit: Number(r.grossProfit),
+    }));
   }
 
   /**
@@ -377,9 +377,13 @@ export class ReportsService {
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       const durationHours = Math.max(durationMs / 3600000, 1); // Min 1 hour to avoid division by zero
 
+      const rev = Number(report.totalRevenue);
+      const cogs = Number(report.totalCOGS);
+      const gp = Number(report.grossProfit);
+
       const marginPercent =
-        report.totalRevenue > 0
-          ? Math.round((report.grossProfit / report.totalRevenue) * 10000) / 100
+        rev > 0
+          ? Math.round((gp / rev) * 10000) / 100
           : 0;
 
       return {
@@ -389,15 +393,15 @@ export class ReportsService {
         finishedAt,
         durationHours: Math.round(durationHours * 100) / 100,
         // Totals
-        totalRevenue: report.totalRevenue,
-        totalCOGS: report.totalCOGS,
-        grossProfit: report.grossProfit,
+        totalRevenue: rev,
+        totalCOGS: cogs,
+        grossProfit: gp,
         marginPercent,
         totalUnitsSold: report.totalUnitsSold,
         totalOrderCount: report.totalOrderCount,
         // Normalized per hour
-        revenuePerHour: Math.round(report.totalRevenue / durationHours),
-        cogsPerHour: Math.round(report.totalCOGS / durationHours),
+        revenuePerHour: Math.round(rev / durationHours),
+        cogsPerHour: Math.round(cogs / durationHours),
         unitsPerHour: Math.round((report.totalUnitsSold / durationHours) * 100) / 100,
         ordersPerHour: Math.round((report.totalOrderCount / durationHours) * 100) / 100,
       };

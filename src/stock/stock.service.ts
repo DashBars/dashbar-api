@@ -19,6 +19,7 @@ import {
 import { NotOwnerException } from '../common/exceptions';
 import { Stock, ConsignmentReturn, OwnershipMode, StockLocationType, StockMovementReason, MovementType } from '@prisma/client';
 import { BulkReturnStockDto, BulkReturnMode } from './dto/bulk-return-stock.dto';
+import { DiscardStockDto, BulkDiscardStockDto } from './dto/discard-stock.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { GlobalInventoryService } from '../global-inventory/global-inventory.service';
 
@@ -1071,5 +1072,93 @@ export class StockService {
     }
 
     return { processed: toGlobal + toSupplier, toGlobal, toSupplier, errors };
+  }
+
+  /**
+   * Discard a partial stock remainder (less than 1 full unit).
+   * Zeros out the stock and logs an adjustment movement.
+   */
+  async discardStock(
+    userId: number,
+    dto: DiscardStockDto,
+  ): Promise<{ drinkId: number; discardedMl: number }> {
+    // Verify bar belongs to event
+    await this.barsService.findOne(dto.eventId, dto.barId, userId);
+
+    const stock = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
+      dto.barId,
+      dto.drinkId,
+      dto.supplierId,
+      dto.sellAsWholeUnit,
+    );
+
+    if (!stock) {
+      throw new NotFoundException(
+        `No stock found for drink ${dto.drinkId} with supplier ${dto.supplierId} in bar`,
+      );
+    }
+
+    if (stock.quantity <= 0) {
+      throw new BadRequestException('Stock quantity is already 0');
+    }
+
+    const discardedMl = stock.quantity;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Delete the stock entry (it's a partial remainder, zero it out)
+      await tx.stock.delete({
+        where: {
+          barId_drinkId_supplierId_sellAsWholeUnit: {
+            barId: dto.barId,
+            drinkId: dto.drinkId,
+            supplierId: dto.supplierId,
+            sellAsWholeUnit: dto.sellAsWholeUnit,
+          },
+        },
+      });
+
+      // Log an adjustment movement for traceability
+      await tx.inventoryMovement.create({
+        data: {
+          barId: dto.barId,
+          drinkId: dto.drinkId,
+          supplierId: dto.supplierId,
+          quantity: -discardedMl,
+          type: MovementType.adjustment,
+          reason: StockMovementReason.ADJUSTMENT,
+          notes: dto.notes || `Descarte de remanente parcial (${discardedMl} ml)`,
+          performedById: userId,
+        },
+      });
+    });
+
+    return { drinkId: dto.drinkId, discardedMl };
+  }
+
+  /**
+   * Bulk discard partial stock remainders.
+   */
+  async bulkDiscardStock(
+    userId: number,
+    dto: BulkDiscardStockDto,
+  ): Promise<{ processed: number; totalMlDiscarded: number; errors: string[] }> {
+    let processed = 0;
+    let totalMlDiscarded = 0;
+    const errors: string[] = [];
+
+    for (const item of dto.items) {
+      try {
+        const result = await this.discardStock(userId, {
+          ...item,
+          notes: dto.notes || item.notes,
+        });
+        processed++;
+        totalMlDiscarded += result.discardedMl;
+      } catch (err: any) {
+        errors.push(`Drink ${item.drinkId}: ${err.message}`);
+      }
+    }
+
+    return { processed, totalMlDiscarded, errors };
   }
 }
