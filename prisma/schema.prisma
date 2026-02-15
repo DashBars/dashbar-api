@@ -592,19 +592,20 @@ model CocktailCategory {
   @@map("cocktail_category")
 }
 
-// Configurable stock thresholds per event and drink
+// Configurable stock thresholds per event, drink and stock type
 model StockThreshold {
-  id                  Int  @id @default(autoincrement())
-  eventId             Int  @map("event_id")
-  drinkId             Int  @map("drink_id")
-  lowerThreshold      Int  @map("lower_threshold") // Critical floor (ml)
-  donationThreshold   Int  @map("donation_threshold") // Surplus level (ml)
-  depletionHorizonMin Int? @map("depletion_horizon_min") // Optional: minutes for projection
+  id                  Int     @id @default(autoincrement())
+  eventId             Int     @map("event_id")
+  drinkId             Int     @map("drink_id")
+  sellAsWholeUnit     Boolean @default(false) @map("sell_as_whole_unit") // true = venta directa, false = para recetas
+  lowerThreshold      Int     @map("lower_threshold") // Critical floor in units
+  donationThreshold   Int     @map("donation_threshold") // Surplus level in units
+  depletionHorizonMin Int?    @map("depletion_horizon_min") // Optional: minutes for projection
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   drink Drink @relation(fields: [drinkId], references: [id])
 
-  @@unique([eventId, drinkId])
+  @@unique([eventId, drinkId, sellAsWholeUnit])
   @@map("stock_threshold")
 }
 
@@ -614,13 +615,15 @@ model StockAlert {
   eventId          Int         @map("event_id")
   barId            Int         @map("bar_id")
   drinkId          Int         @map("drink_id")
+  sellAsWholeUnit  Boolean     @default(false) @map("sell_as_whole_unit")
   type             AlertType
   status           AlertStatus @default(active)
-  currentStock     Int         @map("current_stock")
-  threshold        Int // The threshold that was breached
+  currentStock     Int         @map("current_stock") // in units
+  threshold        Int // The threshold that was breached (units)
   suggestedDonors  Json?       @map("suggested_donors") // Array of donor suggestions
   externalNeeded   Boolean     @default(false) @map("external_needed")
   projectedMinutes Int?        @map("projected_minutes") // Time to depletion
+  message          String?     // Human-readable alert message
   createdAt        DateTime    @default(now()) @map("created_at")
   resolvedAt       DateTime?   @map("resolved_at")
 

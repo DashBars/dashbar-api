@@ -30,193 +30,157 @@ export class AlarmsService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // ============= THRESHOLD MANAGEMENT =============
+  // ── Helpers ──
 
   /**
-   * Create a threshold for an event and drink
+   * Build a descriptive label for the stock type.
    */
+  private stockTypeLabel(sellAsWholeUnit: boolean): string {
+    return sellAsWholeUnit ? 'venta directa' : 'recetas';
+  }
+
+  /**
+   * Convert raw stock quantity (always stored in ml) to units (bottles/cans).
+   * Stock.quantity is stored in ml regardless of sellAsWholeUnit flag.
+   */
+  private toUnits(rawQty: number, drinkVolume: number, _sellAsWholeUnit: boolean): number {
+    return drinkVolume > 0 ? Math.floor(rawQty / drinkVolume) : 0;
+  }
+
+  // ============= THRESHOLD MANAGEMENT =============
+
   async createThreshold(
     eventId: number,
     userId: number,
     dto: CreateThresholdDto,
   ): Promise<StockThreshold> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
+    if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
-    if (!this.eventsService.isOwner(event, userId)) {
-      throw new NotOwnerException();
-    }
-
-    // Validate drink exists
     const drink = await this.repository.getDrinkById(dto.drinkId);
-    if (!drink) {
-      throw new NotFoundException(`Drink with ID ${dto.drinkId} not found`);
-    }
+    if (!drink) throw new NotFoundException(`Drink with ID ${dto.drinkId} not found`);
 
-    // Validate thresholds
     if (dto.donationThreshold < dto.lowerThreshold) {
       throw new BadRequestException(
         'Donation threshold must be greater than or equal to lower threshold',
       );
     }
 
-    // Check if threshold already exists
-    const existing = await this.repository.findThresholdByEventAndDrink(
+    const existing = await this.repository.findThresholdByEventDrinkAndType(
       eventId,
       dto.drinkId,
+      dto.sellAsWholeUnit,
     );
     if (existing) {
       throw new BadRequestException(
-        `Threshold already exists for drink ${dto.drinkId} in this event`,
+        `Ya existe un umbral para ${drink.name} (${this.stockTypeLabel(dto.sellAsWholeUnit)}) en este evento`,
       );
     }
 
     return this.repository.createThreshold({
       eventId,
       drinkId: dto.drinkId,
+      sellAsWholeUnit: dto.sellAsWholeUnit,
       lowerThreshold: dto.lowerThreshold,
       donationThreshold: dto.donationThreshold,
       depletionHorizonMin: dto.depletionHorizonMin,
     });
   }
 
-  /**
-   * Get all thresholds for an event
-   */
   async findAllThresholds(eventId: number): Promise<StockThreshold[]> {
     await this.eventsService.findById(eventId);
     return this.repository.findThresholdsByEvent(eventId);
   }
 
-  /**
-   * Get a specific threshold
-   */
-  async findThreshold(eventId: number, drinkId: number): Promise<StockThreshold> {
-    const threshold = await this.repository.findThresholdByEventAndDrink(
+  async findThreshold(
+    eventId: number,
+    drinkId: number,
+    sellAsWholeUnit: boolean,
+  ): Promise<StockThreshold> {
+    const threshold = await this.repository.findThresholdByEventDrinkAndType(
       eventId,
       drinkId,
+      sellAsWholeUnit,
     );
-
     if (!threshold) {
       throw new NotFoundException(
-        `Threshold for drink ${drinkId} not found in event ${eventId}`,
+        `Threshold for drink ${drinkId} (${this.stockTypeLabel(sellAsWholeUnit)}) not found in event ${eventId}`,
       );
     }
-
     return threshold;
   }
 
-  /**
-   * Update a threshold
-   */
   async updateThreshold(
     eventId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
     userId: number,
     dto: UpdateThresholdDto,
   ): Promise<StockThreshold> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
+    if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
-    if (!this.eventsService.isOwner(event, userId)) {
-      throw new NotOwnerException();
-    }
+    const existing = await this.findThreshold(eventId, drinkId, sellAsWholeUnit);
 
-    const existing = await this.findThreshold(eventId, drinkId);
-
-    // Validate thresholds
     const newLower = dto.lowerThreshold ?? existing.lowerThreshold;
     const newDonation = dto.donationThreshold ?? existing.donationThreshold;
-
     if (newDonation < newLower) {
       throw new BadRequestException(
         'Donation threshold must be greater than or equal to lower threshold',
       );
     }
 
-    return this.repository.updateThreshold(eventId, drinkId, dto);
+    return this.repository.updateThreshold(eventId, drinkId, sellAsWholeUnit, dto);
   }
 
-  /**
-   * Delete a threshold
-   */
   async deleteThreshold(
     eventId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
     userId: number,
   ): Promise<void> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
+    if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
-    if (!this.eventsService.isOwner(event, userId)) {
-      throw new NotOwnerException();
-    }
-
-    await this.findThreshold(eventId, drinkId);
-    await this.repository.deleteThreshold(eventId, drinkId);
+    await this.findThreshold(eventId, drinkId, sellAsWholeUnit);
+    await this.repository.deleteThreshold(eventId, drinkId, sellAsWholeUnit);
   }
 
   // ============= ALERT MANAGEMENT =============
 
-  /**
-   * Get all alerts for an event
-   */
-  async findAllAlerts(
-    eventId: number,
-    status?: AlertStatus,
-  ): Promise<StockAlert[]> {
+  async findAllAlerts(eventId: number, status?: AlertStatus): Promise<StockAlert[]> {
     await this.eventsService.findById(eventId);
     return this.repository.findAlertsByEvent(eventId, status);
   }
 
-  /**
-   * Get a specific alert
-   */
   async findAlert(eventId: number, alertId: number): Promise<StockAlert> {
     const alert = await this.repository.findAlertById(alertId);
-
     if (!alert || (alert as any).event?.id !== eventId) {
       throw new NotFoundException(`Alert with ID ${alertId} not found in event ${eventId}`);
     }
-
     return alert;
   }
 
-  /**
-   * Acknowledge an alert
-   */
-  async acknowledgeAlert(
-    eventId: number,
-    alertId: number,
-    userId: number,
-  ): Promise<StockAlert> {
+  async acknowledgeAlert(eventId: number, alertId: number, userId: number): Promise<StockAlert> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-
-    if (!this.eventsService.isOwner(event, userId)) {
-      throw new NotOwnerException();
-    }
+    if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
     const alert = await this.findAlert(eventId, alertId);
-
     if (alert.status !== AlertStatus.active) {
       throw new BadRequestException('Alert is not in active status');
     }
-
     return this.repository.updateAlertStatus(alertId, AlertStatus.acknowledged);
   }
 
-  /**
-   * Resolve an alert
-   */
   async resolveAlert(alertId: number): Promise<StockAlert> {
-    return this.repository.updateAlertStatus(
-      alertId,
-      AlertStatus.resolved,
-      new Date(),
-    );
+    return this.repository.updateAlertStatus(alertId, AlertStatus.resolved, new Date());
   }
 
   // ============= ALERT DETECTION =============
 
   /**
-   * Check thresholds after a sale and create alerts if needed
+   * Check thresholds after a sale and create alerts if needed.
+   * Called after each sale to detect low stock per sellAsWholeUnit pool.
    */
   async checkThresholdsAfterSale(
     eventId: number,
@@ -226,49 +190,65 @@ export class AlarmsService {
     const uniqueDrinkIds = [...new Set(drinkIds)];
 
     for (const drinkId of uniqueDrinkIds) {
-      const threshold = await this.repository.findThresholdByEventAndDrink(
-        eventId,
-        drinkId,
-      );
-
-      if (!threshold) continue;
-
-      const currentStock = await this.repository.getTotalStockForBarDrink(
-        barId,
-        drinkId,
-      );
-
-      // Check for low stock
-      if (currentStock < threshold.lowerThreshold) {
-        await this.createLowStockAlert(
+      // Check both stock pools: direct-sale and recipe
+      for (const sellAsWholeUnit of [true, false]) {
+        const threshold = await this.repository.findThresholdByEventDrinkAndType(
           eventId,
+          drinkId,
+          sellAsWholeUnit,
+        );
+        if (!threshold) continue;
+
+        const drink = await this.repository.getDrinkById(drinkId);
+        const drinkVolume = drink?.volume ?? 0;
+
+        // Get raw stock quantity (units for whole, ml for recipe)
+        const rawStock = await this.repository.getTotalStockForBarDrink(
           barId,
           drinkId,
-          currentStock,
-          threshold,
-        );
-      }
-
-      // Check for projected depletion
-      if (threshold.depletionHorizonMin) {
-        const rate = await this.repository.getConsumptionRate(
-          barId,
-          drinkId,
-          30, // 30 minute window
+          sellAsWholeUnit,
         );
 
-        if (rate > 0) {
-          const minutesToDepletion = currentStock / rate;
+        // Convert to units for comparison with threshold
+        const currentUnits = this.toUnits(rawStock, drinkVolume, sellAsWholeUnit);
 
-          if (minutesToDepletion < threshold.depletionHorizonMin) {
-            await this.createProjectedDepletionAlert(
-              eventId,
-              barId,
-              drinkId,
-              currentStock,
-              threshold,
-              Math.round(minutesToDepletion),
-            );
+        // Check for low stock (fire when AT or below threshold)
+        if (currentUnits <= threshold.lowerThreshold) {
+          await this.createLowStockAlert(
+            eventId,
+            barId,
+            drinkId,
+            sellAsWholeUnit,
+            currentUnits,
+            threshold,
+          );
+        }
+
+        // Check for projected depletion
+        if (threshold.depletionHorizonMin) {
+          const rate = await this.repository.getConsumptionRate(barId, drinkId, 30);
+          if (rate > 0) {
+            // Convert rate to units/minute
+            const rateInUnits = sellAsWholeUnit
+              ? rate // already in units for whole-unit sales
+              : drinkVolume > 0
+                ? rate / drinkVolume
+                : 0;
+
+            if (rateInUnits > 0) {
+              const minutesToDepletion = currentUnits / rateInUnits;
+              if (minutesToDepletion < threshold.depletionHorizonMin) {
+                await this.createProjectedDepletionAlert(
+                  eventId,
+                  barId,
+                  drinkId,
+                  sellAsWholeUnit,
+                  currentUnits,
+                  threshold,
+                  Math.round(minutesToDepletion),
+                );
+              }
+            }
           }
         }
       }
@@ -276,100 +256,126 @@ export class AlarmsService {
   }
 
   /**
-   * Force check all thresholds for an event
+   * Force check all thresholds for an event.
+   * Returns both newly created alerts AND existing active/acknowledged alerts
+   * for pools that are at or below threshold, so the user always sees the full picture.
    */
   async forceCheckThresholds(eventId: number, userId: number): Promise<StockAlert[]> {
     const event = await this.eventsService.findByIdWithOwner(eventId);
-
-    if (!this.eventsService.isOwner(event, userId)) {
-      throw new NotOwnerException();
-    }
+    if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
     const thresholds = await this.repository.findThresholdsByEvent(eventId);
-    const barsWithStock = new Map<number, Map<number, number>>();
-
-    // Get all bars in event
-    const bars = await this.repository.getBarsWithStockForDrink(eventId, 0);
-
-    const createdAlerts: StockAlert[] = [];
+    const resultAlerts: StockAlert[] = [];
+    const seenAlertIds = new Set<number>();
 
     for (const threshold of thresholds) {
+      const drink = await this.repository.getDrinkById(threshold.drinkId);
+      const drinkVolume = drink?.volume ?? 0;
+
       const barsForDrink = await this.repository.getBarsWithStockForDrink(
         eventId,
         threshold.drinkId,
+        threshold.sellAsWholeUnit,
       );
 
       for (const bar of barsForDrink) {
-        if (bar.totalStock < threshold.lowerThreshold) {
-          const alert = await this.createLowStockAlert(
+        const currentUnits = this.toUnits(
+          bar.totalStock,
+          drinkVolume,
+          threshold.sellAsWholeUnit,
+        );
+
+        if (currentUnits <= threshold.lowerThreshold) {
+          // Try to create a new alert (returns null if one already exists)
+          const newAlert = await this.createLowStockAlert(
             eventId,
             bar.id,
             threshold.drinkId,
-            bar.totalStock,
+            threshold.sellAsWholeUnit,
+            currentUnits,
             threshold,
           );
-          if (alert) createdAlerts.push(alert);
+
+          if (newAlert) {
+            resultAlerts.push(newAlert);
+            seenAlertIds.add(newAlert.id);
+          } else {
+            // Alert already exists — include it in the response so the user sees it
+            const existing = await this.repository.findActiveAlertForBarDrink(
+              bar.id,
+              threshold.drinkId,
+              threshold.sellAsWholeUnit,
+              AlertType.low_stock,
+            );
+            if (existing && !seenAlertIds.has(existing.id)) {
+              resultAlerts.push(existing);
+              seenAlertIds.add(existing.id);
+            }
+          }
         }
       }
     }
 
-    return createdAlerts;
+    return resultAlerts;
   }
 
-  /**
-   * Create a low stock alert
-   */
+  // ── Alert creation helpers ──
+
   private async createLowStockAlert(
     eventId: number,
     barId: number,
     drinkId: number,
-    currentStock: number,
+    sellAsWholeUnit: boolean,
+    currentUnits: number,
     threshold: StockThreshold,
   ): Promise<StockAlert | null> {
-    // Check if there's already an active alert for this bar/drink
     const existing = await this.repository.findActiveAlertForBarDrink(
       barId,
       drinkId,
+      sellAsWholeUnit,
       AlertType.low_stock,
     );
+    if (existing) return null;
 
-    if (existing) return null; // Don't create duplicate alerts
-
-    // Find donor bars
-    const neededQty = threshold.lowerThreshold - currentStock;
+    const neededQty = threshold.lowerThreshold - currentUnits;
     const { donors, externalNeeded } = await this.findDonorBars(
       eventId,
       barId,
       drinkId,
+      sellAsWholeUnit,
       neededQty,
       threshold.donationThreshold,
     );
 
     const drink = await this.repository.getDrinkById(drinkId);
+    const label = this.stockTypeLabel(sellAsWholeUnit);
+    const message = `${drink?.name ?? 'Insumo'} para ${label} alcanzó el umbral de stock (${currentUnits}/${threshold.lowerThreshold} unidades)`;
 
     const alert = await this.repository.createAlert({
       eventId,
       barId,
       drinkId,
+      sellAsWholeUnit,
       type: AlertType.low_stock,
-      currentStock,
+      currentStock: currentUnits,
       threshold: threshold.lowerThreshold,
       suggestedDonors: donors,
       externalNeeded,
+      message,
     });
 
-    // Update bar status to lowStock when low stock alert is created
     await this.barsService.updateBarStatus(barId, BarStatus.lowStock);
 
-    // Emit event for WebSocket broadcast
     this.eventEmitter.emit('alert.created', {
       eventId,
       barId,
       alertId: alert.id,
       drinkId,
       drinkName: drink?.name ?? 'Unknown',
+      sellAsWholeUnit,
       type: 'low_stock',
-      currentStock,
+      message,
+      currentStock: currentUnits,
       threshold: threshold.lowerThreshold,
       suggestedDonors: donors,
       externalNeeded,
@@ -379,24 +385,21 @@ export class AlarmsService {
     return alert;
   }
 
-  /**
-   * Create a projected depletion alert
-   */
   private async createProjectedDepletionAlert(
     eventId: number,
     barId: number,
     drinkId: number,
-    currentStock: number,
+    sellAsWholeUnit: boolean,
+    currentUnits: number,
     threshold: StockThreshold,
     projectedMinutes: number,
   ): Promise<StockAlert | null> {
-    // Check if there's already an active alert for this bar/drink
     const existing = await this.repository.findActiveAlertForBarDrink(
       barId,
       drinkId,
+      sellAsWholeUnit,
       AlertType.projected_depletion,
     );
-
     if (existing) return null;
 
     const neededQty = threshold.lowerThreshold;
@@ -404,22 +407,27 @@ export class AlarmsService {
       eventId,
       barId,
       drinkId,
+      sellAsWholeUnit,
       neededQty,
       threshold.donationThreshold,
     );
 
     const drink = await this.repository.getDrinkById(drinkId);
+    const label = this.stockTypeLabel(sellAsWholeUnit);
+    const message = `${drink?.name ?? 'Insumo'} para ${label} se agotará en ~${projectedMinutes} minutos (${currentUnits} unidades restantes)`;
 
     const alert = await this.repository.createAlert({
       eventId,
       barId,
       drinkId,
+      sellAsWholeUnit,
       type: AlertType.projected_depletion,
-      currentStock,
+      currentStock: currentUnits,
       threshold: threshold.depletionHorizonMin!,
       suggestedDonors: donors,
       externalNeeded,
       projectedMinutes,
+      message,
     });
 
     this.eventEmitter.emit('alert.created', {
@@ -428,8 +436,10 @@ export class AlarmsService {
       alertId: alert.id,
       drinkId,
       drinkName: drink?.name ?? 'Unknown',
+      sellAsWholeUnit,
       type: 'projected_depletion',
-      currentStock,
+      message,
+      currentStock: currentUnits,
       threshold: threshold.depletionHorizonMin!,
       suggestedDonors: donors,
       externalNeeded,
@@ -441,22 +451,31 @@ export class AlarmsService {
   }
 
   /**
-   * Find donor bars that can contribute stock
+   * Find donor bars that can contribute stock.
    */
   private async findDonorBars(
     eventId: number,
     excludeBarId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
     neededQty: number,
     donationThreshold: number,
   ): Promise<{ donors: DonorSuggestion[]; externalNeeded: boolean }> {
-    const bars = await this.repository.getBarsWithStockForDrink(eventId, drinkId);
+    const drink = await this.repository.getDrinkById(drinkId);
+    const drinkVolume = drink?.volume ?? 0;
+
+    const bars = await this.repository.getBarsWithStockForDrink(
+      eventId,
+      drinkId,
+      sellAsWholeUnit,
+    );
     const donors: DonorSuggestion[] = [];
 
     for (const bar of bars) {
       if (bar.id === excludeBarId) continue;
 
-      const surplus = bar.totalStock - donationThreshold;
+      const barUnits = this.toUnits(bar.totalStock, drinkVolume, sellAsWholeUnit);
+      const surplus = barUnits - donationThreshold;
       if (surplus > 0) {
         donors.push({
           barId: bar.id,
@@ -467,7 +486,6 @@ export class AlarmsService {
       }
     }
 
-    // Sort by available surplus descending
     donors.sort((a, b) => b.availableSurplus - a.availableSurplus);
 
     return {

@@ -17,7 +17,7 @@ import { AlarmsModule } from '../alarms/alarms.module';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
+        secret: configService.get<string>('JWT_SECRET') || 'dashbar-secret-key-change-in-production',
         signOptions: { expiresIn: '1d' },
       }),
     }),

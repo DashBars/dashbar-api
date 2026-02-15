@@ -16,23 +16,26 @@ export class AlarmsRepository {
   // ============= THRESHOLDS =============
 
   async createThreshold(data: Prisma.StockThresholdUncheckedCreateInput): Promise<StockThreshold> {
-    return this.prisma.stockThreshold.create({ data });
+    return this.prisma.stockThreshold.create({ data, include: { drink: true } });
   }
 
   async findThresholdsByEvent(eventId: number): Promise<StockThreshold[]> {
     return this.prisma.stockThreshold.findMany({
       where: { eventId },
       include: { drink: true },
-      orderBy: { drinkId: 'asc' },
+      orderBy: [{ drinkId: 'asc' }, { sellAsWholeUnit: 'desc' }],
     });
   }
 
-  async findThresholdByEventAndDrink(
+  async findThresholdByEventDrinkAndType(
     eventId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
   ): Promise<StockThreshold | null> {
     return this.prisma.stockThreshold.findUnique({
-      where: { eventId_drinkId: { eventId, drinkId } },
+      where: {
+        eventId_drinkId_sellAsWholeUnit: { eventId, drinkId, sellAsWholeUnit },
+      },
       include: { drink: true },
     });
   }
@@ -40,17 +43,27 @@ export class AlarmsRepository {
   async updateThreshold(
     eventId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
     data: Prisma.StockThresholdUpdateInput,
   ): Promise<StockThreshold> {
     return this.prisma.stockThreshold.update({
-      where: { eventId_drinkId: { eventId, drinkId } },
+      where: {
+        eventId_drinkId_sellAsWholeUnit: { eventId, drinkId, sellAsWholeUnit },
+      },
       data,
+      include: { drink: true },
     });
   }
 
-  async deleteThreshold(eventId: number, drinkId: number): Promise<void> {
+  async deleteThreshold(
+    eventId: number,
+    drinkId: number,
+    sellAsWholeUnit: boolean,
+  ): Promise<void> {
     await this.prisma.stockThreshold.delete({
-      where: { eventId_drinkId: { eventId, drinkId } },
+      where: {
+        eventId_drinkId_sellAsWholeUnit: { eventId, drinkId, sellAsWholeUnit },
+      },
     });
   }
 
@@ -60,24 +73,28 @@ export class AlarmsRepository {
     eventId: number;
     barId: number;
     drinkId: number;
+    sellAsWholeUnit: boolean;
     type: AlertType;
     currentStock: number;
     threshold: number;
     suggestedDonors: DonorSuggestion[];
     externalNeeded: boolean;
     projectedMinutes?: number;
+    message?: string;
   }): Promise<StockAlert> {
     return this.prisma.stockAlert.create({
       data: {
         eventId: data.eventId,
         barId: data.barId,
         drinkId: data.drinkId,
+        sellAsWholeUnit: data.sellAsWholeUnit,
         type: data.type,
         currentStock: data.currentStock,
         threshold: data.threshold,
         suggestedDonors: data.suggestedDonors as any,
         externalNeeded: data.externalNeeded,
         projectedMinutes: data.projectedMinutes,
+        message: data.message,
       },
       include: { bar: true, drink: true },
     });
@@ -107,12 +124,14 @@ export class AlarmsRepository {
   async findActiveAlertForBarDrink(
     barId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
     type: AlertType,
   ): Promise<StockAlert | null> {
     return this.prisma.stockAlert.findFirst({
       where: {
         barId,
         drinkId,
+        sellAsWholeUnit,
         type,
         status: { in: [AlertStatus.active, AlertStatus.acknowledged] },
       },
@@ -134,28 +153,35 @@ export class AlarmsRepository {
   // ============= STOCK QUERIES =============
 
   /**
-   * Get total stock for a bar and drink (aggregated across suppliers)
+   * Get total stock for a bar and drink, filtered by sellAsWholeUnit.
+   * Returns quantity in ml (Stock.quantity is always stored in ml).
    */
-  async getTotalStockForBarDrink(barId: number, drinkId: number): Promise<number> {
+  async getTotalStockForBarDrink(
+    barId: number,
+    drinkId: number,
+    sellAsWholeUnit: boolean,
+  ): Promise<number> {
     const result = await this.prisma.stock.aggregate({
-      where: { barId, drinkId },
+      where: { barId, drinkId, sellAsWholeUnit },
       _sum: { quantity: true },
     });
     return result._sum.quantity ?? 0;
   }
 
   /**
-   * Get all bars in an event with their total stock for a specific drink
+   * Get all bars in an event with their total stock for a specific drink,
+   * filtered by sellAsWholeUnit.
    */
   async getBarsWithStockForDrink(
     eventId: number,
     drinkId: number,
+    sellAsWholeUnit: boolean,
   ): Promise<BarWithStock[]> {
     const bars = await this.prisma.bar.findMany({
       where: { eventId },
       include: {
         stocks: {
-          where: { drinkId },
+          where: drinkId > 0 ? { drinkId, sellAsWholeUnit } : { sellAsWholeUnit },
           select: { quantity: true },
         },
       },

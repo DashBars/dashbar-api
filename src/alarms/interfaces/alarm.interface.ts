@@ -11,7 +11,9 @@ export interface AlertCreatedEvent {
   alertId: number;
   drinkId: number;
   drinkName: string;
+  sellAsWholeUnit: boolean;
   type: 'low_stock' | 'projected_depletion';
+  message: string;
   currentStock: number;
   threshold: number;
   suggestedDonors: DonorSuggestion[];

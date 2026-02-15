@@ -251,6 +251,45 @@ export class POSSalesRepository {
     });
   }
 
+  async findByEventId(
+    eventId: number,
+    options?: { page?: number; limit?: number },
+  ): Promise<{ sales: POSSaleWithRelations[]; total: number }> {
+    const page = options?.page || 1;
+    const limit = options?.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [sales, total] = await this.prisma.$transaction([
+      this.prisma.pOSSale.findMany({
+        where: { eventId, status: POSSaleStatus.COMPLETED },
+        include: {
+          items: true,
+          payments: true,
+          posnet: {
+            select: { id: true, code: true, name: true },
+          },
+          bar: {
+            select: { id: true, name: true, type: true },
+          },
+          event: {
+            select: { id: true, name: true },
+          },
+          cashier: {
+            select: { id: true, email: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.pOSSale.count({
+        where: { eventId, status: POSSaleStatus.COMPLETED },
+      }),
+    ]);
+
+    return { sales: sales as POSSaleWithRelations[], total };
+  }
+
   async getSalesStats(
     posnetId: number,
     periodStart: Date,

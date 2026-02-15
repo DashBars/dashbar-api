@@ -6,9 +6,11 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   ParseIntPipe,
 } from '@nestjs/common';
 import { PosnetsService } from './posnets.service';
+import { POSSalesService } from './pos-sales.service';
 import { SessionsService } from './sessions.service';
 import { CreatePosnetDto, UpdatePosnetDto, PosLoginDto, OpenSessionDto, CloseSessionDto } from './dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -20,6 +22,7 @@ import { User, UserRole } from '@prisma/client';
 export class PosnetsController {
   constructor(
     private readonly posnetsService: PosnetsService,
+    private readonly posSalesService: POSSalesService,
     private readonly sessionsService: SessionsService,
   ) {}
 
@@ -154,6 +157,22 @@ export class PosnetsController {
     @Param('sessionId', ParseIntPipe) sessionId: number,
   ) {
     return this.sessionsService.getSessionSummary(sessionId);
+  }
+
+  /**
+   * Get paginated sales for an event
+   */
+  @Get('events/:eventId/sales')
+  @Roles(UserRole.manager, UserRole.admin)
+  async getEventSales(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.posSalesService.getEventSales(eventId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? Math.min(parseInt(limit, 10), 100) : 20,
+    });
   }
 
   // ============================================

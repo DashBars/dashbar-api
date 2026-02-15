@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DashboardRepository } from './dashboard.repository';
 import { EventsService } from '../events/events.service';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   DashboardTotals,
   TimeSeriesResponse,
@@ -15,7 +16,16 @@ export class DashboardService {
   constructor(
     private readonly repository: DashboardRepository,
     private readonly eventsService: EventsService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  /** Quick lookup for posnet status (used by gateway metrics broadcast) */
+  async getPosnetStatus(posnetId: number) {
+    return this.prisma.posnet.findUnique({
+      where: { id: posnetId },
+      select: { status: true },
+    });
+  }
 
   /**
    * Get dashboard totals for an event
@@ -136,6 +146,11 @@ export class DashboardService {
       data.eventId,
     );
 
+    // Determine if this is a direct sale from the depletion data
+    const isDirectSale = data.depletions.length > 0
+      ? data.depletions.every((d) => d.sellAsWholeUnit)
+      : false;
+
     return {
       type: 'sale:created',
       eventId: data.eventId,
@@ -146,6 +161,7 @@ export class DashboardService {
         cocktailName: cocktail?.name ?? 'Unknown',
         quantity: data.sale.quantity,
         totalAmount: (cocktail?.resolvedPrice ?? 0) * data.sale.quantity,
+        isDirectSale,
         createdAt: data.sale.createdAt,
       },
     };

@@ -139,6 +139,7 @@ export class PosnetsRepository {
       enabled?: boolean;
       authToken?: string;
       lastHeartbeatAt?: Date;
+      traffic?: number;
     },
   ): Promise<PosnetWithRelations> {
     return this.prisma.posnet.update({

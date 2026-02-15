@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   ParseIntPipe,
+  ParseBoolPipe,
 } from '@nestjs/common';
 import { AlarmsService } from './alarms.service';
 import { CreateThresholdDto, UpdateThresholdDto } from './dto';
@@ -39,27 +40,41 @@ export class AlarmsController {
   findThreshold(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('drinkId', ParseIntPipe) drinkId: number,
+    @Query('sellAsWholeUnit', ParseBoolPipe) sellAsWholeUnit: boolean,
   ) {
-    return this.alarmsService.findThreshold(eventId, drinkId);
+    return this.alarmsService.findThreshold(eventId, drinkId, sellAsWholeUnit);
   }
 
   @Put('thresholds/:drinkId')
   updateThreshold(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('drinkId', ParseIntPipe) drinkId: number,
+    @Query('sellAsWholeUnit', ParseBoolPipe) sellAsWholeUnit: boolean,
     @CurrentUser() user: User,
     @Body() dto: UpdateThresholdDto,
   ) {
-    return this.alarmsService.updateThreshold(eventId, drinkId, user.id, dto);
+    return this.alarmsService.updateThreshold(
+      eventId,
+      drinkId,
+      sellAsWholeUnit,
+      user.id,
+      dto,
+    );
   }
 
   @Delete('thresholds/:drinkId')
   deleteThreshold(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('drinkId', ParseIntPipe) drinkId: number,
+    @Query('sellAsWholeUnit', ParseBoolPipe) sellAsWholeUnit: boolean,
     @CurrentUser() user: User,
   ) {
-    return this.alarmsService.deleteThreshold(eventId, drinkId, user.id);
+    return this.alarmsService.deleteThreshold(
+      eventId,
+      drinkId,
+      sellAsWholeUnit,
+      user.id,
+    );
   }
 
   // ============= ALERTS =============

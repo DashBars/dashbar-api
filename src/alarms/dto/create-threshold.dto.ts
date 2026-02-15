@@ -1,16 +1,19 @@
-import { IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
 
 export class CreateThresholdDto {
   @IsInt()
   drinkId: number;
 
-  @IsInt()
-  @Min(0)
-  lowerThreshold: number;
+  @IsBoolean()
+  sellAsWholeUnit: boolean;
 
   @IsInt()
   @Min(0)
-  donationThreshold: number;
+  lowerThreshold: number; // in units (bottles/cans)
+
+  @IsInt()
+  @Min(0)
+  donationThreshold: number; // in units
 
   @IsOptional()
   @IsInt()

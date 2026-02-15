@@ -338,14 +338,26 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
   }) {
     this.logger.log(`Broadcasting POS sale completed: posnetId=${data.posnetId}, saleId=${data.saleId}`);
 
+    // Build the payload in the format the frontend expects (WsPosSalePayload)
+    const payload = {
+      posnetId: data.posnetId,
+      eventId: data.eventId,
+      barId: data.barId,
+      sale: {
+        id: data.saleId,
+        total: data.total,
+        itemCount: data.itemCount,
+      },
+    };
+
     // Broadcast to POS room
-    this.server.to(`pos:${data.posnetId}`).emit('pos:sale_completed', data);
+    this.server.to(`pos:${data.posnetId}`).emit('pos:sale_completed', payload);
 
     // Broadcast to event room (for manager dashboard)
-    this.server.to(`event:${data.eventId}`).emit('pos:sale_completed', data);
+    this.server.to(`event:${data.eventId}`).emit('pos:sale_completed', payload);
 
     // Broadcast to bar room
-    this.server.to(`bar:${data.barId}`).emit('pos:sale_completed', data);
+    this.server.to(`bar:${data.barId}`).emit('pos:sale_completed', payload);
   }
 
   /**
@@ -401,24 +413,35 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   /**
-   * Handle pos.metrics.updated event from EventEmitter
+   * Handle pos.metrics.updated event from EventEmitter.
+   * Reshapes the backend POSMetrics into the frontend-expected shape:
+   * { posnetId, metrics: { traffic: number, status: PosnetStatus } }
    */
   @OnEvent('pos.metrics.updated')
-  handlePOSMetricsUpdated(data: {
+  async handlePOSMetricsUpdated(data: {
     posnetId: number;
     eventId: number;
     metrics: any;
   }) {
-    // Broadcast to POS room
-    this.server.to(`pos:${data.posnetId}`).emit('pos:metrics_update', {
+    // Fetch current POS status so the frontend gets a consistent snapshot
+    let status = 'OPEN';
+    try {
+      const posnet = await this.dashboardService.getPosnetStatus(data.posnetId);
+      if (posnet) status = posnet.status;
+    } catch { /* fallback to OPEN */ }
+
+    const payload = {
       posnetId: data.posnetId,
-      metrics: data.metrics,
-    });
+      metrics: {
+        traffic: data.metrics.traffic ?? 0,
+        status,
+      },
+    };
+
+    // Broadcast to POS room
+    this.server.to(`pos:${data.posnetId}`).emit('pos:metrics_update', payload);
 
     // Broadcast to event room (for manager dashboard)
-    this.server.to(`event:${data.eventId}`).emit('pos:metrics_update', {
-      posnetId: data.posnetId,
-      metrics: data.metrics,
-    });
+    this.server.to(`event:${data.eventId}`).emit('pos:metrics_update', payload);
   }
 }

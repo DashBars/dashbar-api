@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class DiscardStockDto {
@@ -27,6 +27,8 @@ export class DiscardStockDto {
 }
 
 export class BulkDiscardStockDto {
+  @IsArray()
+  @ValidateNested({ each: true })
   @Type(() => DiscardStockDto)
   items: DiscardStockDto[];
 

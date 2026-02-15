@@ -11,6 +11,7 @@ export interface POSMetrics {
   avgCheckoutMs: number;
   salesCount: number;
   revenue: number;
+  traffic: number; // 0-100 score for UI traffic bar
   periodStart: Date;
   periodEnd: Date;
 }
@@ -79,12 +80,17 @@ export class MetricsService {
       avgCheckoutMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     }
 
+    // Derive a 0-100 traffic score from salesCount in the window.
+    // ~5 sales in the window = 20%, ~10 = 40%, ~25 = 100% (fully busy).
+    const traffic = Math.min(Math.round((salesCount / 25) * 100), 100);
+
     return {
       posnetId,
       tps,
       avgCheckoutMs,
       salesCount,
       revenue,
+      traffic,
       periodStart,
       periodEnd,
     };
@@ -124,10 +130,10 @@ export class MetricsService {
       const newStatus = isCongested ? PosnetStatus.CONGESTED : PosnetStatus.OPEN;
 
       if (currentStatus !== newStatus) {
-        // Update status
+        // Update status + traffic
         await this.prisma.posnet.update({
           where: { id: posnetId },
-          data: { status: newStatus },
+          data: { status: newStatus, traffic: metrics.traffic },
         });
 
         // Emit status change event
@@ -141,8 +147,14 @@ export class MetricsService {
         });
 
         this.logger.log(
-          `POS ${posnetId} status changed: ${currentStatus} -> ${newStatus} (TPS: ${metrics.tps.toFixed(2)})`,
+          `POS ${posnetId} status changed: ${currentStatus} -> ${newStatus} (TPS: ${metrics.tps.toFixed(2)}, traffic: ${metrics.traffic}%)`,
         );
+      } else {
+        // Status unchanged — still persist latest traffic score so REST consumers see it
+        await this.prisma.posnet.update({
+          where: { id: posnetId },
+          data: { traffic: metrics.traffic },
+        });
       }
 
       // Always emit metrics update

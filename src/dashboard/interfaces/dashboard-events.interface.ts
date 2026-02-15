@@ -11,6 +11,7 @@ export interface SaleCreatedEvent {
     barId: number;
     drinkId: number;
     supplierId: number;
+    sellAsWholeUnit: boolean;
     quantityToDeduct: number;
   }>;
 }
@@ -25,6 +26,7 @@ export interface SaleCreatedPayload {
     cocktailName: string;
     quantity: number;
     totalAmount: number;
+    isDirectSale: boolean;
     createdAt: Date;
   };
 }

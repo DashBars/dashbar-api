@@ -171,6 +171,24 @@ export class POSSalesService {
   }
 
   /**
+   * Get paginated sales for an event
+   */
+  async getEventSales(
+    eventId: number,
+    options?: { page?: number; limit?: number },
+  ): Promise<{ sales: POSSaleWithRelations[]; total: number; page: number; limit: number; totalPages: number }> {
+    const page = options?.page || 1;
+    const limit = options?.limit || 20;
+    const result = await this.salesRepository.findByEventId(eventId, { page, limit });
+    return {
+      ...result,
+      page,
+      limit,
+      totalPages: Math.ceil(result.total / limit),
+    };
+  }
+
+  /**
    * Get a specific sale by ID
    */
   async getSaleById(saleId: number): Promise<POSSaleWithRelations> {
