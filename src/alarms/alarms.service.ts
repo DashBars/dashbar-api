@@ -265,28 +265,35 @@ export class AlarmsService {
     if (!this.eventsService.isOwner(event, userId)) throw new NotOwnerException();
 
     const thresholds = await this.repository.findThresholdsByEvent(eventId);
+    if (thresholds.length === 0) return [];
+
+    // Batch: fetch all drinks referenced by thresholds in one query
+    const drinkIds = [...new Set(thresholds.map((t) => t.drinkId))];
+    const drinks = await this.repository.getDrinksByIds(drinkIds);
+    const drinkMap = new Map(drinks.map((d) => [d.id, d]));
+
+    // Batch: fetch all bars with their stock in one query
+    const allBars = await this.repository.getAllBarsWithStock(eventId);
+
     const resultAlerts: StockAlert[] = [];
     const seenAlertIds = new Set<number>();
 
     for (const threshold of thresholds) {
-      const drink = await this.repository.getDrinkById(threshold.drinkId);
+      const drink = drinkMap.get(threshold.drinkId);
       const drinkVolume = drink?.volume ?? 0;
 
-      const barsForDrink = await this.repository.getBarsWithStockForDrink(
-        eventId,
-        threshold.drinkId,
-        threshold.sellAsWholeUnit,
-      );
+      for (const bar of allBars) {
+        const totalStock = bar.stocks
+          .filter(
+            (s) =>
+              s.drinkId === threshold.drinkId &&
+              s.sellAsWholeUnit === threshold.sellAsWholeUnit,
+          )
+          .reduce((sum, s) => sum + s.quantity, 0);
 
-      for (const bar of barsForDrink) {
-        const currentUnits = this.toUnits(
-          bar.totalStock,
-          drinkVolume,
-          threshold.sellAsWholeUnit,
-        );
+        const currentUnits = this.toUnits(totalStock, drinkVolume, threshold.sellAsWholeUnit);
 
         if (currentUnits <= threshold.lowerThreshold) {
-          // Try to create a new alert (returns null if one already exists)
           const newAlert = await this.createLowStockAlert(
             eventId,
             bar.id,
@@ -300,7 +307,6 @@ export class AlarmsService {
             resultAlerts.push(newAlert);
             seenAlertIds.add(newAlert.id);
           } else {
-            // Alert already exists — include it in the response so the user sees it
             const existing = await this.repository.findActiveAlertForBarDrink(
               bar.id,
               threshold.drinkId,

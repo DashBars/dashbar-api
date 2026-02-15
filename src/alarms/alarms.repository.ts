@@ -229,6 +229,30 @@ export class AlarmsRepository {
   }
 
   /**
+   * Get multiple drinks by IDs in a single query
+   */
+  async getDrinksByIds(drinkIds: number[]) {
+    return this.prisma.drink.findMany({
+      where: { id: { in: drinkIds } },
+    });
+  }
+
+  /**
+   * Get all bars for an event with all their stock (including drink details).
+   * Used for batched threshold checks to avoid N+1 queries.
+   */
+  async getAllBarsWithStock(eventId: number) {
+    return this.prisma.bar.findMany({
+      where: { eventId },
+      include: {
+        stocks: {
+          select: { drinkId: true, sellAsWholeUnit: true, quantity: true },
+        },
+      },
+    });
+  }
+
+  /**
    * Get bar with event
    */
   async getBarWithEvent(barId: number) {

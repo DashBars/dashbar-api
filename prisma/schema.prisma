@@ -371,6 +371,7 @@ model Stock {
 
   // Incluye sellAsWholeUnit en la clave para permitir stock separado para venta directa vs recetas
   @@id([barId, drinkId, supplierId, sellAsWholeUnit])
+  @@index([barId, drinkId, sellAsWholeUnit])
 }
 
 model Posnet {
@@ -631,6 +632,7 @@ model StockAlert {
   bar   Bar   @relation(fields: [barId], references: [id])
   drink Drink @relation(fields: [drinkId], references: [id])
 
+  @@index([eventId, status])
   @@map("stock_alert")
 }
 
