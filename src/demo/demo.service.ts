@@ -586,9 +586,11 @@ export class DemoService {
       const drinkVol = drinkVolumeMap.get(item.drinkId) ?? 1;
       const totalUnitsPerBar = Math.round(item.quantity / drinkVol);
 
-      // Alarm at ~15% remaining stock, donation surplus above ~40%
-      const lowerThreshold = Math.max(Math.round(totalUnitsPerBar * 0.15), 5);
-      const donationThreshold = Math.max(Math.round(totalUnitsPerBar * 0.40), lowerThreshold + 10);
+      // Demo thresholds: alarm fires quickly so we can test.
+      // lowerThreshold at ~75% of starting stock = fires after ~25% consumed.
+      // donationThreshold at ~85% = bars above this can donate surplus.
+      const lowerThreshold = Math.max(Math.round(totalUnitsPerBar * 0.75), 5);
+      const donationThreshold = Math.max(Math.round(totalUnitsPerBar * 0.85), lowerThreshold + 5);
 
       await this.prisma.stockThreshold.create({
         data: {
