@@ -281,18 +281,29 @@ export class ReportsRepository {
         im.supplier_id,
         sup.name as supplier_name,
         ABS(SUM(im.quantity)) as total_ml,
-        s.unit_cost,
-        s.ownership_mode
+        COALESCE(s.unit_cost, gi.unit_cost) as unit_cost,
+        COALESCE(s.ownership_mode, gi.ownership_mode) as ownership_mode
       FROM inventory_movement im
       JOIN "Bar" b ON im.bar_id = b.id
+      JOIN "Event" e ON b."eventId" = e.id
       JOIN "Drink" d ON im.drink_id = d.id
       JOIN supplier sup ON im.supplier_id = sup.id
       LEFT JOIN "Stock" s ON s.bar_id = im.bar_id
         AND s.drink_id = im.drink_id
         AND s.supplier_id = im.supplier_id
+      LEFT JOIN global_inventory gi ON gi.owner_id = e."ownerId"
+        AND gi.drink_id = im.drink_id
+        AND gi.supplier_id = im.supplier_id
       WHERE b."eventId" = ${eventId}
         AND im.type = 'sale'
-      GROUP BY im.drink_id, d.name, d.volume, im.supplier_id, sup.name, s.unit_cost, s.ownership_mode
+      GROUP BY
+        im.drink_id,
+        d.name,
+        d.volume,
+        im.supplier_id,
+        sup.name,
+        COALESCE(s.unit_cost, gi.unit_cost),
+        COALESCE(s.ownership_mode, gi.ownership_mode)
       ORDER BY d.name, sup.name
     `;
 

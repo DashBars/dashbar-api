@@ -68,7 +68,7 @@ export class ReportsService {
     // 2. Check if event has finished (warning if not, but still allow generation)
     const warnings: string[] = [];
     if (!event.finishedAt) {
-      warnings.push('Event has not finished yet. Report may be incomplete.');
+      warnings.push('El evento aún no finalizó. El reporte puede estar incompleto.');
     }
 
     // 3. Try to get data from POSSale first (newer system), fallback to legacy Sale
@@ -123,7 +123,7 @@ export class ReportsService {
     );
     if (missingCostItems.length > 0) {
       warnings.push(
-        `Missing unit cost for ${missingCostItems.length} drink(s): ${missingCostItems.map((i) => i.drinkName).join(', ')}. COGS may be underestimated.`,
+        `Falta costo unitario para ${missingCostItems.length} insumo(s): ${missingCostItems.map((i) => i.drinkName).join(', ')}. El costo de ventas podría estar subestimado.`,
       );
     }
 
