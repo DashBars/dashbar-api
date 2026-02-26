@@ -1153,16 +1153,13 @@ export class StockService {
           continue;
         }
 
-        const quantityInMl = item.quantity * drinkVolume;
-        if (quantityInMl <= 0) {
-          errors.push(`Drink ${item.drinkId}: Quantity must be greater than 0`);
-          continue;
-        }
+        const requestedUnits = item.quantity;
+        const maxReturnableUnits = Math.floor(currentStock.quantity / drinkVolume);
+        const returnUnits = Math.min(requestedUnits, maxReturnableUnits);
+        const quantityInMl = returnUnits * drinkVolume;
 
-        if (currentStock.quantity < quantityInMl) {
-          errors.push(
-            `Drink ${item.drinkId}: Cannot return ${item.quantity} units (${quantityInMl} ml). Only ${currentStock.quantity} ml available.`,
-          );
+        if (returnUnits <= 0 || quantityInMl <= 0) {
+          errors.push(`Drink ${item.drinkId}: Quantity must be greater than 0`);
           continue;
         }
 
@@ -1229,7 +1226,7 @@ export class StockService {
                   ownerId: userId,
                   drinkId: item.drinkId,
                   supplierId: supplierIdForGlobal,
-                  totalQuantity: item.quantity,
+                  totalQuantity: returnUnits,
                   allocatedQuantity: 0,
                   unitCost: currentStock.unitCost,
                   currency: currentStock.currency,
@@ -1237,14 +1234,14 @@ export class StockService {
                 },
               });
             } else {
-              if (globalInv.allocatedQuantity < item.quantity) {
+              if (globalInv.allocatedQuantity < returnUnits) {
                 throw new BadRequestException(
-                  `Cannot return ${item.quantity} units. Global inventory allocatedQuantity is ${globalInv.allocatedQuantity}.`,
+                  `Cannot return ${returnUnits} units. Global inventory allocatedQuantity is ${globalInv.allocatedQuantity}.`,
                 );
               }
               globalInv = await tx.globalInventory.update({
                 where: { id: globalInv.id },
-                data: { allocatedQuantity: { decrement: item.quantity } },
+                data: { allocatedQuantity: { decrement: returnUnits } },
               });
             }
 
@@ -1257,15 +1254,15 @@ export class StockService {
                 barId: item.barId,
                 drinkId: item.drinkId,
                 supplierId: item.supplierId,
-                quantity: item.quantity,
+                quantity: returnUnits,
                 type: MovementType.transfer_in,
                 reason: StockMovementReason.RETURN_TO_GLOBAL,
                 sellAsWholeUnit: item.sellAsWholeUnit,
                 performedById: userId,
                 globalInventoryId: globalInv.id,
                 notes: notes
-                  ? `${notes} (${item.quantity} unidades = ${quantityInMl} ml)`
-                  : `${item.quantity} unidades = ${quantityInMl} ml`,
+                  ? `${notes} (${returnUnits} unidades = ${quantityInMl} ml)`
+                  : `${returnUnits} unidades = ${quantityInMl} ml`,
               },
             });
           } else {
@@ -1282,10 +1279,10 @@ export class StockService {
                 where: { id: globalInv.id },
                 data: {
                   totalQuantity: {
-                    decrement: Math.min(item.quantity, globalInv.totalQuantity),
+                    decrement: Math.min(returnUnits, globalInv.totalQuantity),
                   },
                   allocatedQuantity: {
-                    decrement: Math.min(item.quantity, globalInv.allocatedQuantity),
+                    decrement: Math.min(returnUnits, globalInv.allocatedQuantity),
                   },
                 },
               });
@@ -1300,15 +1297,15 @@ export class StockService {
                 barId: item.barId,
                 drinkId: item.drinkId,
                 supplierId: item.supplierId,
-                quantity: item.quantity,
+                quantity: returnUnits,
                 type: MovementType.transfer_out,
                 reason: StockMovementReason.RETURN_TO_PROVIDER,
                 sellAsWholeUnit: item.sellAsWholeUnit,
                 performedById: userId,
                 globalInventoryId: globalInv?.id || null,
                 notes: notes
-                  ? `${notes} (${item.quantity} unidades = ${quantityInMl} ml)`
-                  : `Devolución a proveedor (${item.quantity} unidades = ${quantityInMl} ml)`,
+                  ? `${notes} (${returnUnits} unidades = ${quantityInMl} ml)`
+                  : `Devolución a proveedor (${returnUnits} unidades = ${quantityInMl} ml)`,
               },
             });
           }
