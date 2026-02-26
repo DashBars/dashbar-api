@@ -193,6 +193,12 @@ export class AssistantService {
       }
     }
 
+    // Fallback if the model kept using tools but never produced final text
+    if (!assistantResponse.trim()) {
+      assistantResponse =
+        'No pude completar una respuesta final con los datos disponibles en este intento. Probá reformulando la consulta o indicame el evento exacto (ID o nombre) para responderte con precisión.';
+    }
+
     // Save assistant response
     await this.prisma.assistantMessage.create({
       data: {
@@ -332,16 +338,21 @@ export class AssistantService {
       }
     }
 
-    // Save response
-    if (fullResponse) {
-      await this.prisma.assistantMessage.create({
-        data: {
-          conversationId: conversation.id,
-          role: 'assistant',
-          content: fullResponse,
-        },
-      });
+    // Fallback if no final text was produced after tool loops
+    if (!fullResponse.trim()) {
+      fullResponse =
+        'No pude completar una respuesta final con los datos disponibles en este intento. Probá reformulando la consulta o indicame el evento exacto (ID o nombre) para responderte con precisión.';
+      yield { type: 'text_delta', data: { text: fullResponse } };
     }
+
+    // Save response
+    await this.prisma.assistantMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: fullResponse,
+      },
+    });
 
     // Auto-title
     if (!conversation.title && message.length > 0) {

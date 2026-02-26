@@ -183,7 +183,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'run_custom_query',
     description:
-      'Run a read-only SQL SELECT query against the database. Use this for complex analytical queries that other tools cannot answer. IMPORTANT: Only SELECT statements are allowed. The query runs with a 5-second timeout. Available tables include: "event", "bar", "stock", "drink", "supplier", "event_recipe", "event_recipe_component", "event_product", "pos_sale", "pos_sale_item", "pos_payment", "pos_session", "posnet", "inventory_movement", "global_inventory", "event_report", "metric_sample", "venue". All event-scoped data should be filtered by user_id through the event table.',
+      'Run a read-only SQL SELECT query against the database. Use this for complex analytical queries that other tools cannot answer. IMPORTANT: Only SELECT statements are allowed. The query runs with a 5-second timeout. Use exact table names as they exist in Postgres, e.g. "Event", "Bar", "Drink", "Venue", "User", "pos_sale", "pos_sale_item", "pos_payment", "pos_session", "posnet", "inventory_movement", "global_inventory", "event_report", "metric_sample", "event_product", "event_recipe", "event_recipe_component", "supplier". Always filter event-scoped queries by owner: join with "Event" and constrain "Event"."ownerId" = current user id.',
     input_schema: {
       type: 'object' as const,
       properties: {

@@ -418,16 +418,39 @@ export class StockService {
       // Same product = same price always. If a recipe already exists with a price,
       // that price is the canonical one. Price changes go through recipe management.
       let canonicalPrice: number | null = null;
-      let existingRecipe: { id: number; salePrice: number } | null = null;
+      let existingRecipe: { id: number; salePrice: number; cocktailName: string } | null = null;
 
       if (isDirectSale) {
-        existingRecipe = await tx.eventRecipe.findFirst({
+        const candidateRecipes = await tx.eventRecipe.findMany({
           where: {
             eventId: dto.eventId,
-            cocktailName: drink.name,
+            components: {
+              some: {
+                drinkId: globalInv.drinkId,
+                percentage: 100,
+              },
+            },
           },
-          select: { id: true, salePrice: true },
+          select: {
+            id: true,
+            salePrice: true,
+            cocktailName: true,
+            components: {
+              select: {
+                drinkId: true,
+                percentage: true,
+              },
+            },
+          },
         });
+
+        existingRecipe =
+          candidateRecipes.find(
+            (recipe) =>
+              recipe.components.length === 1 &&
+              recipe.components[0].drinkId === globalInv.drinkId &&
+              recipe.components[0].percentage === 100,
+          ) ?? null;
 
         if (existingRecipe && existingRecipe.salePrice > 0) {
           // Always use existing recipe price — same product = same price
@@ -435,6 +458,13 @@ export class StockService {
         } else {
           // First time assigning this product — use DTO price
           canonicalPrice = dto.salePrice!;
+          // If there is a legacy direct-sale recipe without price, sync it now.
+          if (existingRecipe) {
+            await tx.eventRecipe.update({
+              where: { id: existingRecipe.id },
+              data: { salePrice: canonicalPrice },
+            });
+          }
         }
       }
 
@@ -496,21 +526,23 @@ export class StockService {
       let eventProduct = null;
       if (isDirectSale && canonicalPrice !== null) {
         // Find or create Cocktail entry for the drink
+        const productName = existingRecipe?.cocktailName || drink.name;
+
         let cocktail = await tx.cocktail.findFirst({
-          where: { name: drink.name, eventId: dto.eventId },
+          where: { name: productName, eventId: dto.eventId },
         });
 
         if (!cocktail) {
           // Try legacy global cocktail
           cocktail = await tx.cocktail.findFirst({
-            where: { name: drink.name, eventId: null },
+            where: { name: productName, eventId: null },
           });
         }
 
         if (!cocktail) {
           cocktail = await tx.cocktail.create({
             data: {
-              name: drink.name,
+              name: productName,
               eventId: dto.eventId,
               price: canonicalPrice,
               volume: drink.volume,
@@ -520,8 +552,6 @@ export class StockService {
         }
 
         // Create or update EventProduct for this bar using the canonical price
-        const productName = drink.name;
-
         eventProduct = await tx.eventProduct.upsert({
           where: {
             eventId_name_barId: {
@@ -1034,36 +1064,268 @@ export class StockService {
     userId: number,
     dto: BulkReturnStockDto,
   ): Promise<{ processed: number; toGlobal: number; toSupplier: number; errors: string[] }> {
+    if (!dto.items?.length) {
+      return { processed: 0, toGlobal: 0, toSupplier: 0, errors: [] };
+    }
+
     let toGlobal = 0;
     let toSupplier = 0;
     const errors: string[] = [];
 
+    // Validate ownership once per event (instead of once per item).
+    const uniqueEventIds = Array.from(new Set(dto.items.map((i) => i.eventId)));
+    for (const eventId of uniqueEventIds) {
+      const event = await this.eventsService.findByIdWithOwner(eventId);
+      if (!this.eventsService.isOwner(event, userId)) {
+        throw new NotOwnerException();
+      }
+    }
+
+    // Validate bar ownership once per (event, bar).
+    const eventBarPairs = new Map<string, { eventId: number; barId: number }>();
+    for (const item of dto.items) {
+      const key = `${item.eventId}:${item.barId}`;
+      if (!eventBarPairs.has(key)) {
+        eventBarPairs.set(key, { eventId: item.eventId, barId: item.barId });
+      }
+    }
+    for (const pair of eventBarPairs.values()) {
+      await this.barsService.findOne(pair.eventId, pair.barId, userId);
+    }
+
+    // Prefetch drink volumes once.
+    const uniqueDrinkIds = Array.from(new Set(dto.items.map((i) => i.drinkId)));
+    const drinks = await this.prisma.drink.findMany({
+      where: { id: { in: uniqueDrinkIds } },
+      select: { id: true, volume: true },
+    });
+    const drinkVolumeById = new Map<number, number>(
+      drinks.map((d) => [d.id, d.volume]),
+    );
+
+    // Prefetch target stock rows once and keep an in-memory quantity tracker
+    // to avoid re-querying the same row on repeated items.
+    const stockRows = await this.prisma.stock.findMany({
+      where: {
+        OR: dto.items.map((item) => ({
+          barId: item.barId,
+          drinkId: item.drinkId,
+          supplierId: item.supplierId,
+          sellAsWholeUnit: item.sellAsWholeUnit,
+        })),
+      },
+      select: {
+        barId: true,
+        drinkId: true,
+        supplierId: true,
+        sellAsWholeUnit: true,
+        quantity: true,
+        ownershipMode: true,
+        unitCost: true,
+        currency: true,
+      },
+    });
+
+    const stockKey = (item: {
+      barId: number;
+      drinkId: number;
+      supplierId: number;
+      sellAsWholeUnit: boolean;
+    }) =>
+      `${item.barId}:${item.drinkId}:${item.supplierId}:${item.sellAsWholeUnit}`;
+
+    const stockByKey = new Map(
+      stockRows.map((s) => [stockKey(s), s]),
+    );
+
     for (const item of dto.items) {
       try {
-        if (dto.mode === BulkReturnMode.AUTO) {
-          // Determine ownership from actual stock
-          const stock = await this.stockRepository.findByBarIdDrinkIdAndSupplierId(
-            item.barId,
-            item.drinkId,
-            item.supplierId,
-            item.sellAsWholeUnit,
+        const key = stockKey(item);
+        const currentStock = stockByKey.get(key);
+        if (!currentStock) {
+          errors.push(`Drink ${item.drinkId}: Stock not found`);
+          continue;
+        }
+
+        const drinkVolume = drinkVolumeById.get(item.drinkId);
+        if (!drinkVolume) {
+          errors.push(`Drink ${item.drinkId}: Drink not found`);
+          continue;
+        }
+
+        const quantityInMl = item.quantity * drinkVolume;
+        if (quantityInMl <= 0) {
+          errors.push(`Drink ${item.drinkId}: Quantity must be greater than 0`);
+          continue;
+        }
+
+        if (currentStock.quantity < quantityInMl) {
+          errors.push(
+            `Drink ${item.drinkId}: Cannot return ${item.quantity} units (${quantityInMl} ml). Only ${currentStock.quantity} ml available.`,
           );
-          if (!stock) {
-            errors.push(`Stock not found for drink ${item.drinkId}`);
-            continue;
+          continue;
+        }
+
+        const resolvedMode =
+          dto.mode === BulkReturnMode.AUTO
+            ? currentStock.ownershipMode === OwnershipMode.consignment
+              ? BulkReturnMode.TO_SUPPLIER
+              : BulkReturnMode.TO_GLOBAL
+            : dto.mode;
+
+        if (
+          resolvedMode === BulkReturnMode.TO_SUPPLIER &&
+          currentStock.ownershipMode !== OwnershipMode.consignment
+        ) {
+          errors.push(
+            `Drink ${item.drinkId}: Solo se puede devolver al proveedor stock en consignación.`,
+          );
+          continue;
+        }
+
+        const notes = dto.notes || item.notes;
+
+        await this.prisma.$transaction(async (tx) => {
+          // Decrease bar stock (ml).
+          const updatedStock = await tx.stock.update({
+            where: {
+              barId_drinkId_supplierId_sellAsWholeUnit: {
+                barId: item.barId,
+                drinkId: item.drinkId,
+                supplierId: item.supplierId,
+                sellAsWholeUnit: item.sellAsWholeUnit,
+              },
+            },
+            data: { quantity: { decrement: quantityInMl } },
+            select: { quantity: true },
+          });
+
+          if (updatedStock.quantity === 0) {
+            await tx.stock.delete({
+              where: {
+                barId_drinkId_supplierId_sellAsWholeUnit: {
+                  barId: item.barId,
+                  drinkId: item.drinkId,
+                  supplierId: item.supplierId,
+                  sellAsWholeUnit: item.sellAsWholeUnit,
+                },
+              },
+            });
           }
-          if (stock.ownershipMode === OwnershipMode.consignment) {
-            await this.returnToSupplier(userId, { ...item, notes: dto.notes || item.notes });
-            toSupplier++;
+
+          if (resolvedMode === BulkReturnMode.TO_GLOBAL) {
+            const supplierIdForGlobal = item.supplierId || null;
+            let globalInv = await tx.globalInventory.findFirst({
+              where: {
+                ownerId: userId,
+                drinkId: item.drinkId,
+                supplierId: supplierIdForGlobal,
+              },
+            });
+
+            if (!globalInv) {
+              globalInv = await tx.globalInventory.create({
+                data: {
+                  ownerId: userId,
+                  drinkId: item.drinkId,
+                  supplierId: supplierIdForGlobal,
+                  totalQuantity: item.quantity,
+                  allocatedQuantity: 0,
+                  unitCost: currentStock.unitCost,
+                  currency: currentStock.currency,
+                  ownershipMode: currentStock.ownershipMode,
+                },
+              });
+            } else {
+              if (globalInv.allocatedQuantity < item.quantity) {
+                throw new BadRequestException(
+                  `Cannot return ${item.quantity} units. Global inventory allocatedQuantity is ${globalInv.allocatedQuantity}.`,
+                );
+              }
+              globalInv = await tx.globalInventory.update({
+                where: { id: globalInv.id },
+                data: { allocatedQuantity: { decrement: item.quantity } },
+              });
+            }
+
+            await tx.inventoryMovement.create({
+              data: {
+                fromLocationType: StockLocationType.BAR,
+                fromLocationId: item.barId,
+                toLocationType: StockLocationType.GLOBAL,
+                toLocationId: null,
+                barId: item.barId,
+                drinkId: item.drinkId,
+                supplierId: item.supplierId,
+                quantity: item.quantity,
+                type: MovementType.transfer_in,
+                reason: StockMovementReason.RETURN_TO_GLOBAL,
+                sellAsWholeUnit: item.sellAsWholeUnit,
+                performedById: userId,
+                globalInventoryId: globalInv.id,
+                notes: notes
+                  ? `${notes} (${item.quantity} unidades = ${quantityInMl} ml)`
+                  : `${item.quantity} unidades = ${quantityInMl} ml`,
+              },
+            });
           } else {
-            await this.returnStock(userId, { ...item, notes: dto.notes || item.notes });
-            toGlobal++;
+            const globalInv = await tx.globalInventory.findFirst({
+              where: {
+                ownerId: userId,
+                drinkId: item.drinkId,
+                supplierId: item.supplierId,
+              },
+            });
+
+            if (globalInv) {
+              await tx.globalInventory.update({
+                where: { id: globalInv.id },
+                data: {
+                  totalQuantity: {
+                    decrement: Math.min(item.quantity, globalInv.totalQuantity),
+                  },
+                  allocatedQuantity: {
+                    decrement: Math.min(item.quantity, globalInv.allocatedQuantity),
+                  },
+                },
+              });
+            }
+
+            await tx.inventoryMovement.create({
+              data: {
+                fromLocationType: StockLocationType.BAR,
+                fromLocationId: item.barId,
+                toLocationType: null,
+                toLocationId: null,
+                barId: item.barId,
+                drinkId: item.drinkId,
+                supplierId: item.supplierId,
+                quantity: item.quantity,
+                type: MovementType.transfer_out,
+                reason: StockMovementReason.RETURN_TO_PROVIDER,
+                sellAsWholeUnit: item.sellAsWholeUnit,
+                performedById: userId,
+                globalInventoryId: globalInv?.id || null,
+                notes: notes
+                  ? `${notes} (${item.quantity} unidades = ${quantityInMl} ml)`
+                  : `Devolución a proveedor (${item.quantity} unidades = ${quantityInMl} ml)`,
+              },
+            });
           }
-        } else if (dto.mode === BulkReturnMode.TO_SUPPLIER) {
-          await this.returnToSupplier(userId, { ...item, notes: dto.notes || item.notes });
+        });
+
+        // Keep local stock snapshot in sync so repeated rows in the same batch
+        // don't require an extra read.
+        const nextQty = currentStock.quantity - quantityInMl;
+        if (nextQty <= 0) {
+          stockByKey.delete(key);
+        } else {
+          stockByKey.set(key, { ...currentStock, quantity: nextQty });
+        }
+
+        if (resolvedMode === BulkReturnMode.TO_SUPPLIER) {
           toSupplier++;
         } else {
-          await this.returnStock(userId, { ...item, notes: dto.notes || item.notes });
           toGlobal++;
         }
       } catch (err: any) {

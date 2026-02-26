@@ -534,7 +534,9 @@ export class ReportsService {
   ): ComparisonInsight[] {
     const insights: ComparisonInsight[] = [];
     const totalEvents = eventComparison.length;
-    const threshold = Math.ceil(totalEvents / 2); // 50%+
+    // For very small samples (2 events), require consensus to avoid noisy insights
+    // like "1 of 2 events". For larger sets, keep the 50%+ rule.
+    const threshold = totalEvents <= 2 ? 2 : Math.ceil(totalEvents / 2);
 
     // 1. Consistent top products (appear in top 5 of >= 50% events)
     for (const product of crossEventProducts) {
@@ -555,7 +557,7 @@ export class ReportsService {
     }
 
     // 2. Peak time patterns (same hour in >= 50% events)
-    for (const pattern of peakTimePatterns) {
+    for (const pattern of peakTimePatterns.slice(0, 5)) {
       if (pattern.eventsWithPeak >= threshold) {
         const hourStr = pattern.hourOfDay.toString().padStart(2, '0');
         insights.push({

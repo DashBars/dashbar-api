@@ -52,11 +52,12 @@ async function main() {
   console.log('   Done.');
 
   const hashedPassword = await bcrypt.hash('password123', 10);
+  const ownerPassword = await bcrypt.hash('45034173', 10);
 
   // ============= USERS =============
   console.log('👤 Creating users...');
   const owner = await prisma.user.create({
-    data: { email: 'owner@dashbar.com', password: hashedPassword, role: UserRole.manager },
+    data: { email: 'owner@dashbar.com', password: ownerPassword, role: UserRole.manager },
   });
   const cashier = await prisma.user.create({
     data: { email: 'cashier@dashbar.com', password: hashedPassword, role: UserRole.cashier },
@@ -438,10 +439,10 @@ async function main() {
   console.log('\n' + '='.repeat(60));
   console.log('🎉 SEED COMPLETED!');
   console.log('='.repeat(60));
-  console.log('\n🔑 Credentials (password: password123):');
-  console.log(`   Manager:  owner@dashbar.com`);
-  console.log(`   Cashier:  cashier@dashbar.com`);
-  console.log(`   Admin:    admin@dashbar.com`);
+  console.log('\n🔑 Credentials:');
+  console.log(`   Manager:  owner@dashbar.com (password: 45034173)`);
+  console.log(`   Cashier:  cashier@dashbar.com (password: password123)`);
+  console.log(`   Admin:    admin@dashbar.com (password: password123)`);
   console.log('\n📅 Events:');
   console.log(`   1. ${event1.name} (finished) - ID ${event1.id}`);
   console.log(`   2. ${event2.name} (finished) - ID ${event2.id}`);

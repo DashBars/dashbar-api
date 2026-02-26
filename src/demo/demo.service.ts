@@ -173,7 +173,7 @@ export class DemoService {
       data: {
         code: `POS-DEMO-${event.id}-01`,
         name: 'POS General Demo',
-        status: PosnetStatus.OPEN,
+        status: PosnetStatus.CLOSED,
         enabled: true,
         eventId: event.id,
         barId: barGeneral.id,
@@ -185,7 +185,7 @@ export class DemoService {
       data: {
         code: `POS-DEMO-${event.id}-02`,
         name: 'POS VIP Demo',
-        status: PosnetStatus.OPEN,
+        status: PosnetStatus.CLOSED,
         enabled: true,
         eventId: event.id,
         barId: barVIP.id,
@@ -193,24 +193,7 @@ export class DemoService {
       },
     });
 
-    // 13. Create POS sessions (needed for POS sales)
-    await this.prisma.pOSSession.create({
-      data: {
-        posnetId: posnet1.id,
-        openedByUserId: userId,
-        openingFloat: 0,
-      },
-    });
-
-    await this.prisma.pOSSession.create({
-      data: {
-        posnetId: posnet2.id,
-        openedByUserId: userId,
-        openingFloat: 0,
-      },
-    });
-
-    // 14. Create stock thresholds for alarms
+    // 13. Create stock thresholds for alarms
     await this.createDemoThresholds(event.id, drinks);
 
     // Event stays in 'upcoming' status so the user can review/configure
@@ -260,6 +243,29 @@ export class DemoService {
         data: { status: PosnetStatus.OPEN },
       });
       this.logger.log(`[Demo ${eventId}] Auto-activated event and opened bars/POS`);
+    }
+
+    // Ensure each POS has an open session before simulating sales
+    const posnetsForSession = await this.prisma.posnet.findMany({
+      where: { eventId, enabled: true, status: PosnetStatus.OPEN },
+      select: { id: true },
+    });
+
+    for (const posnet of posnetsForSession) {
+      const hasOpenSession = await this.prisma.pOSSession.findFirst({
+        where: { posnetId: posnet.id, closedAt: null },
+        select: { id: true },
+      });
+
+      if (!hasOpenSession && event) {
+        await this.prisma.pOSSession.create({
+          data: {
+            posnetId: posnet.id,
+            openedByUserId: event.ownerId,
+            openingFloat: 0,
+          },
+        });
+      }
     }
 
     // Get posnet IDs and cocktail IDs for this event
