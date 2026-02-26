@@ -585,7 +585,14 @@ export class ReportsService {
 
     // 1. Consistent top products (appear in top 5 of >= 50% events)
     for (const product of crossEventProducts) {
-      const inTop5 = product.byEvent.filter((e) => e.rank <= 5).length;
+      const inTop5 = Math.min(
+        totalEvents,
+        new Set(
+          product.byEvent
+            .filter((e) => e.rank <= 5)
+            .map((e) => e.eventId),
+        ).size,
+      );
       if (inTop5 >= threshold) {
         insights.push({
           type: 'consistent_top_product',
