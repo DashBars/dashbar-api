@@ -414,30 +414,72 @@ export class ReportsService {
   private analyzeCrossEventProducts(
     reports: (EventReport & { event: Event })[],
   ): CrossEventProduct[] {
-    const productMap = new Map<number, CrossEventProduct>();
+    const productMap = new Map<
+      string,
+      CrossEventProduct & { _eventIds: Set<number> }
+    >();
 
     for (const report of reports) {
       const topProducts = report.topProducts as unknown as TopProductEntry[];
       const event = report.event;
+      const eventRevenue = report.totalRevenue || 1;
 
-      topProducts.forEach((product, index) => {
-        const existing = productMap.get(product.cocktailId);
+      // First, collapse duplicates within the same event by normalized product name.
+      // This avoids showing the same event multiple times for one product when legacy
+      // data has repeated entries with different IDs but identical names.
+      const perEventProductMap = new Map<
+        string,
+        {
+          cocktailId: number;
+          name: string;
+          unitsSold: number;
+          revenue: number;
+        }
+      >();
+
+      for (const product of topProducts) {
+        const normalizedName = product.name.trim().toLowerCase();
+        const existing = perEventProductMap.get(normalizedName);
+        if (existing) {
+          existing.unitsSold += product.unitsSold;
+          existing.revenue += product.revenue;
+        } else {
+          perEventProductMap.set(normalizedName, {
+            cocktailId: product.cocktailId,
+            name: product.name,
+            unitsSold: product.unitsSold,
+            revenue: product.revenue,
+          });
+        }
+      }
+
+      const collapsedProducts = Array.from(perEventProductMap.values()).sort(
+        (a, b) => b.revenue - a.revenue,
+      );
+
+      collapsedProducts.forEach((product, index) => {
+        const normalizedName = product.name.trim().toLowerCase();
+        const existing = productMap.get(normalizedName);
         const eventEntry: CrossEventProductByEvent = {
           eventId: event.id,
           eventName: event.name,
           unitsSold: product.unitsSold,
           revenue: product.revenue,
-          sharePercent: product.sharePercent,
+          sharePercent:
+            Math.round(((product.revenue / eventRevenue) * 100 + Number.EPSILON) * 100) / 100,
           rank: index + 1,
         };
 
         if (existing) {
-          existing.eventsAppeared++;
+          if (!existing._eventIds.has(event.id)) {
+            existing.eventsAppeared++;
+            existing._eventIds.add(event.id);
+            existing.byEvent.push(eventEntry);
+          }
           existing.totalUnitsAcrossEvents += product.unitsSold;
           existing.totalRevenueAcrossEvents += product.revenue;
-          existing.byEvent.push(eventEntry);
         } else {
-          productMap.set(product.cocktailId, {
+          productMap.set(normalizedName, {
             cocktailId: product.cocktailId,
             name: product.name,
             eventsAppeared: 1,
@@ -445,6 +487,7 @@ export class ReportsService {
             totalRevenueAcrossEvents: product.revenue,
             avgSharePercent: 0, // Will calculate after
             byEvent: [eventEntry],
+            _eventIds: new Set([event.id]),
           });
         }
       });
@@ -458,12 +501,14 @@ export class ReportsService {
     }
 
     // Sort by events appeared, then by total units
-    return products.sort((a, b) => {
+    return products
+      .sort((a, b) => {
       if (b.eventsAppeared !== a.eventsAppeared) {
         return b.eventsAppeared - a.eventsAppeared;
       }
       return b.totalUnitsAcrossEvents - a.totalUnitsAcrossEvents;
-    });
+      })
+      .map(({ _eventIds, ...product }) => product);
   }
 
   /**
